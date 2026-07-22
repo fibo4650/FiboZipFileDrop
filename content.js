@@ -41,11 +41,10 @@ function bootstrapFibo() {
     .fibo-dropzone.active { border-color: #a6e3a1; background: rgba(166, 227, 161, 0.1); color: #a6e3a1; }
     .fibo-hint { font-size: 10px; color: #6c7086; margin-top: 4px; }
 
-    /* New List Styles */
     .fibo-file-list {
       flex-grow: 1; overflow-y: auto; background: #181825;
       border: 1px solid #45475a; border-radius: 6px; padding: 8px;
-      display: flex; flex-direction: column; gap: 8px; max-height: 60vh;
+      display: flex; flex-direction: column; gap: 8px; max-height: 50vh;
     }
     .fibo-file-item {
       display: flex; align-items: center; justify-content: space-between;
@@ -59,7 +58,19 @@ function bootstrapFibo() {
       background: #a6e3a1; color: #11111b; font-size: 9px;
       font-weight: bold; padding: 2px 6px; border-radius: 4px; text-transform: uppercase;
     }
+    .fibo-badge-root {
+      background: #f9e2af; color: #11111b; font-size: 9px;
+      font-weight: bold; padding: 2px 6px; border-radius: 4px; text-transform: uppercase;
+    }
     .fibo-action-area { display: flex; flex-direction: column; gap: 8px; }
+    
+    .fibo-log-box {
+      font-family: monospace; font-size: 10px; background: #11111b;
+      border: 1px solid #45475a; border-radius: 6px; padding: 8px;
+      max-height: 150px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px;
+    }
+    .fibo-log-success { color: #a6e3a1; }
+    .fibo-log-fail { color: #f38ba8; }
   `;
 
   fiboPanelInstance = document.createElement('div');
@@ -92,10 +103,20 @@ function bootstrapFibo() {
   const dynamicContentZone = fiboPanelInstance.querySelector('#dynamicContentZone');
 
   const initiateZipScan = async (file) => {
+    if (!picker.directoryHandle) {
+      statusText.innerHTML = "<span style='color: #f38ba8;'>⚠️ Attach target folder first!</span>";
+      return;
+    }
+    const hasPerm = await picker.verifyPermission(true);
+    if (!hasPerm) {
+      statusText.innerHTML = "<span style='color: #f38ba8;'>⚠️ Permission revoked by user</span>";
+      return;
+    }
+
     if (file && file.name.endsWith('.zip')) {
       await processor.stageZip(file, picker.directoryHandle);
     } else {
-      statusText.innerHTML = "<span style='color: #f38ba8;'>❌ Rejected: Not a valid .zip container</span>";
+      statusText.innerHTML = "<span style='color: #f38ba8;'>❌ Rejected: Not a valid .zip archive</span>";
     }
   };
 
@@ -116,18 +137,19 @@ function bootstrapFibo() {
     await initiateZipScan(e.dataTransfer.files[0]);
   });
 
-  // UI Event: The ZIP file was analyzed, show the approval list stage
   bus.subscribe('ZIP_STAGED', (e) => {
     const files = e.payload;
-    statusText.innerText = "Review file conflicts below:";
+    statusText.innerText = "Review file changes below:";
 
     let listHtml = `<div class="fibo-file-list">`;
-    files.forEach((file, index) => {
+    files.forEach((file) => {
+      const isRootDefault = file.parts.length === 0;
       listHtml += `
         <div class="fibo-file-item">
           <span class="fibo-file-info" title="${file.displayPath}">${file.displayPath}</span>
+          ${isRootDefault ? `<span class="fibo-badge-root">main</span>` : ''}
           ${file.exists 
-            ? `<input type="checkbox" class="fibo-replace-check" data-index="${index}" title="File exists. Check box to confirm overwrite replacement." />`
+            ? `<input type="checkbox" class="fibo-replace-check" data-path="${encodeURIComponent(file.displayPath)}" title="File exists. Check to confirm overwrite." />`
             : `<span class="fibo-badge-new">new</span>`
           }
         </div>
@@ -143,30 +165,27 @@ function bootstrapFibo() {
 
     dynamicContentZone.innerHTML = listHtml;
 
-    // Bind interaction triggers inside the newly generated dynamic list UI view
     dynamicContentZone.querySelector('#cancelBtn').onclick = () => {
+      processor.clearState();
       resetToDropzone();
     };
 
     dynamicContentZone.querySelector('#sendBtn').onclick = async () => {
       const checkedBoxes = dynamicContentZone.querySelectorAll('.fibo-replace-check');
-      const approvedIndices = [];
+      const approvedPaths = [];
 
-      // Add all new files automatically + any existing files that were checked by the user
-      files.forEach((file, index) => {
-        if (!file.exists) {
-          approvedIndices.push(index);
-        }
+      files.forEach((file) => {
+        if (!file.exists) approvedPaths.push(file.displayPath);
       });
 
       checkedBoxes.forEach(box => {
         if (box.checked) {
-          approvedIndices.push(parseInt(box.getAttribute('data-index'), 10));
+          approvedPaths.push(decodeURIComponent(box.getAttribute('data-path')));
         }
       });
 
       dynamicContentZone.innerHTML = `<div class="fibo-status">⚡ Writing files to disk...</div>`;
-      await processor.commitUpload(approvedIndices, picker.directoryHandle);
+      await processor.commitUpload(approvedPaths, picker.directoryHandle);
     };
   });
 
@@ -182,26 +201,58 @@ function bootstrapFibo() {
     connectBtn.style.background = '#a6e3a1';
     statusText.innerText = `Folder: ${e.payload}`;
   });
-  
-  bus.subscribe('PROCESS_START', (e) => { statusText.innerText = `⚡ Analyzing archive structure...`; });
-  
+
+  bus.subscribe('PROCESS_START', () => { statusText.innerText = `⚡ Analyzing archive structure...`; });
+
   bus.subscribe('PROCESS_COMPLETE', (e) => {
+    const { successCount, failCount, logs } = e.payload;
     resetToDropzone();
-    statusText.innerHTML = `<span style='color: #a6e3a1;'>🎉 Successfully saved ${e.payload} files!</span>`;
+
+    let statusColor = failCount === 0 ? '#a6e3a1' : '#f38ba8';
+    statusText.innerHTML = `<span style='color: ${statusColor};'>Saved: ${successCount} | Failed: ${failCount}</span>`;
+
+    // Render detailed Execution Log inside the Shadow DOM view
+    let logHtml = `<div class="fibo-log-box">`;
+    logs.forEach(log => {
+      const isOk = log.status === 'SUCCESS';
+      logHtml += `
+        <div class="${isOk ? 'fibo-log-success' : 'fibo-log-fail'}">
+          ${isOk ? '✓' : '✗'} ${log.path} ${log.error ? `(${log.error})` : ''}
+        </div>
+      `;
+    });
+    logHtml += `</div>`;
+    logHtml += `<button class="fibo-btn" id="downloadLogBtn" style="background: #89b4fa;">📥 Download Execution Log</button>`;
+
+    const logContainer = document.createElement('div');
+    logContainer.style.cssText = "display: flex; flex-direction: column; gap: 8px;";
+    logContainer.innerHTML = logHtml;
+    dynamicContentZone.appendChild(logContainer);
+
+    logContainer.querySelector('#downloadLogBtn').onclick = () => {
+      const logText = logs.map(l => `[${l.status}] ${l.path}${l.error ? ` - Error: ${l.error}` : ''}`).join('\n');
+      const blob = new Blob([logText], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `fibo-upload-log-${Date.now()}.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+    };
   });
-  
+
   bus.subscribe('PROCESS_ERROR', (e) => {
     resetToDropzone();
     statusText.innerHTML = `<span style='color: #f38ba8;'>🚨 Error: ${e.payload}</span>`;
   });
-  
-  bus.subscribe('WORKSPACE_ERROR', (e) => { statusText.innerText = `⚠️ Connection Aborted`; });
+
+  bus.subscribe('WORKSPACE_ERROR', () => { statusText.innerText = `⚠️ Connection Aborted`; });
 }
 
 function handleToggle(forceState) {
   isPushedOpen = forceState !== undefined ? forceState : !isPushedOpen;
   bootstrapFibo(); 
-  
+
   if (fiboPanelInstance) {
     if (isPushedOpen) {
       fiboPanelInstance.classList.add('open');
