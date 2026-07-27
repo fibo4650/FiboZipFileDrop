@@ -1,3 +1,19 @@
+<!-- llm.md -->
+<!-- Claude 3.7 Sonnet | FZFD Deprecation Update | 2026-07-27 -->
+
+# [DEPRECATED] AI Architecture & Audit Specification: Fibo Zip File Drop
+
+> ⚠️ **DEPRECATION NOTICE**: This document (`llm.md`) is deprecated and kept for historical reference only. It has been superseded by the active documentation matrix. AI agents and developers should refer strictly to the active files listed below for authoritative project rules, runtime constraints, and event matrices.
+
+---
+
+## Canonical Documentation Index
+
+* **[Audit Specification](Audit.md):** The primary source of truth for system constraints, defensive code standards, threat matrices, and AI code review checklists.
+* **[User & Workflow Guide](USER_GUIDE.md):** Complete operational manual for human developers and prompt engineering standards for 3-line comment headers.
+* **[Feature Expansion Manual](Expand.md):** Active implementation specifications, backlog tasks, and feature completion criteria.
+* **[Product & Rebuild Specification](NewBuild.md):** Core architecture paradigms, lifecycle workflows, and historical lessons learned.
+
 # AI Architecture & Audit Specification: Fibo Zip File Drop
 
 This document serves as the absolute source of truth for AI agents auditing, debugging, or extending the "Fibo zip file drop" Chrome Extension. 

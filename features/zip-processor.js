@@ -1,5 +1,5 @@
 // features/zip-processor.js
-// Gemini | FZFD builder 2 : errors and log | 2026-07-22
+// Gemini 3.6 | FZFD Header & Log Stamp | 2026-07-27
 
 class ZipProcessor {
   constructor(eventBus) {
@@ -8,7 +8,8 @@ class ZipProcessor {
     this.BINARY_EXTENSIONS = new Set([
       'png', 'jpg', 'jpeg', 'gif', 'webp', 'ico',
       'woff', 'woff2', 'ttf', 'otf', 'eot',
-      'pdf', 'zip', 'tar', 'gz', 'mp3', 'mp4', 'wav', 'exe'
+      'pdf', 'zip', 'tar', 'gz', 'mp3', 'mp4', 'wav', 'exe',
+      'dll', 'so', 'dylib', 'class', 'pyc', 'db', 'sqlite'
     ]);
   }
 
@@ -29,10 +30,6 @@ class ZipProcessor {
 
       if (match) {
         let candidate = match[1].trim().replace(/(?:\*\/|-->)$/, '').trim();
-        
-        // Strict Validation:
-        // 1. Must not be a URL (no '://')
-        // 2. Must end strictly with a valid file extension (\.[a-zA-Z0-9]{1,10}$)
         const validExtensionEnd = /\.[a-zA-Z0-9]{1,10}$/;
 
         if (candidate && !candidate.includes('://') && validExtensionEnd.test(candidate)) {
@@ -42,7 +39,6 @@ class ZipProcessor {
           if (pathParts.length > 0) {
             const fileName = pathParts.pop();
 
-            // Verify the extracted target filename itself ends with a valid extension
             if (validExtensionEnd.test(fileName)) {
               displayPath = sanitized;
               parts = pathParts;
@@ -57,13 +53,42 @@ class ZipProcessor {
     return { fileName: rawFileName, displayPath, parts, hasExplicitComment };
   }
 
-  extractSecondLine(textContent) {
-    if (typeof textContent !== 'string') return 'N/A (Binary Content)';
+  extractNthLine(textContent, lineNumber) {
+    if (typeof textContent !== 'string') return null;
     const lines = textContent.split('\n');
-    if (lines.length >= 2 && lines[1].trim().length > 0) {
-      return lines[1].trim();
+    if (lines.length >= lineNumber && lines[lineNumber - 1].trim().length > 0) {
+      return lines[lineNumber - 1].trim();
     }
-    return 'N/A (No Line 2 Present)';
+    return null;
+  }
+
+  parseLine2Info(line2) {
+    const today = new Date().toISOString().split('T')[0];
+    if (!line2 || typeof line2 !== 'string') {
+      return { model: 'Gemini 3.6', chatName: 'FZFD Session', date: today };
+    }
+    const cleaned = line2.replace(/^(?:\/\/|\/\*|#|<!--)\s*/, '').replace(/(?:\*\/|-->)$/, '').trim();
+    const firstPipe = cleaned.indexOf('|');
+    const lastPipe = cleaned.lastIndexOf('|');
+
+    if (firstPipe !== -1 && lastPipe !== -1 && firstPipe < lastPipe) {
+      const model = cleaned.substring(0, firstPipe).trim() || 'Gemini 3.6';
+      const date = cleaned.substring(lastPipe + 1).trim() || today;
+      const chatName = cleaned.substring(firstPipe + 1, lastPipe).trim() || 'FZFD Session';
+      return { model, chatName, date };
+    }
+
+    return { model: 'Gemini 3.6', chatName: cleaned || 'FZFD Session', date: today };
+  }
+
+  parseFeatureInfo(line3) {
+    if (!line3 || typeof line3 !== 'string') return null;
+    const cleaned = line3.replace(/^(?:\/\/|\/\*|#|<!--)\s*/, '').replace(/(?:\*\/|-->)$/, '').trim();
+    const match = cleaned.match(/^feature:\s*(.+)$/i);
+    if (match && match[1].trim()) {
+      return match[1].trim();
+    }
+    return null;
   }
 
   async stageZip(zipBlob, rootHandle) {
@@ -135,46 +160,48 @@ class ZipProcessor {
     }
   }
 
-  async stageSingleFile(file, rootHandle) {
+  async stageMultipleFiles(filesArray, rootHandle) {
     if (!rootHandle) {
       this.bus.publish({ type: 'PROCESS_ERROR', payload: 'Please attach a target folder first!' });
       return;
     }
 
     try {
-      this.bus.publish({ type: 'PROCESS_START', payload: file.name });
+      this.bus.publish({ type: 'PROCESS_START', payload: `${filesArray.length} file(s)` });
       this.stagedFiles = [];
 
-      const isBin = this.isBinary(file.name);
-      let content = null;
-      let firstLine = '';
+      for (const file of filesArray) {
+        const isBin = this.isBinary(file.name);
+        let content = null;
+        let firstLine = '';
 
-      if (isBin) {
-        content = new Uint8Array(await file.arrayBuffer());
-      } else {
-        content = await file.text();
-        firstLine = content.split('\n')[0] || '';
+        if (isBin) {
+          content = new Uint8Array(await file.arrayBuffer());
+        } else {
+          content = await file.text();
+          firstLine = content.split('\n')[0] || '';
+        }
+
+        const { fileName, displayPath, parts } = this.parseTargetInfo(isBin ? null : firstLine, file.name);
+        let fileExists = await this.checkFileExists(rootHandle, parts, fileName);
+        const fileIndex = this.stagedFiles.length;
+
+        this.stagedFiles.push({
+          index: fileIndex,
+          id: `${fileIndex}_${displayPath}`,
+          fileName,
+          displayPath,
+          parts,
+          content,
+          isBinary: isBin,
+          exists: fileExists
+        });
       }
-
-      const { fileName, displayPath, parts } = this.parseTargetInfo(isBin ? null : firstLine, file.name);
-      let fileExists = await this.checkFileExists(rootHandle, parts, fileName);
-      const fileIndex = this.stagedFiles.length;
-
-      this.stagedFiles.push({
-        index: fileIndex,
-        id: `${fileIndex}_${displayPath}`,
-        fileName,
-        displayPath,
-        parts,
-        content,
-        isBinary: isBin,
-        exists: fileExists
-      });
 
       this.bus.publish({ type: 'ZIP_STAGED', payload: this.stagedFiles });
     } catch (err) {
       this.clearState();
-      console.error("Fibo Single File Error:", err);
+      console.error("Fibo Multi-File Staging Error:", err);
       this.bus.publish({ type: 'PROCESS_ERROR', payload: err.message });
     }
   }
@@ -242,19 +269,34 @@ class ZipProcessor {
     }
   }
 
-  async commitUpload(approvedIndices, rootHandle, enableLogging = true) {
+  async commitUpload(approvedIndices, rootHandle, enableLogging = true, enableEvents = true, changeTypesMap = {}) {
     const logs = [];
     let successCount = 0;
     let failCount = 0;
     let firstCopiedSecondLine = null;
+    let firstCopiedThirdLine = null;
 
     try {
       const approvedSet = new Set((approvedIndices || []).map(idx => Number(idx)));
       const targets = this.stagedFiles.filter(f => approvedSet.has(f.index));
+      const total = targets.length;
 
-      for (let i = 0; i < targets.length; i++) {
+      if (total === 0) {
+        this.clearState();
+        this.bus.publish({ type: 'PROCESS_ERROR', payload: 'No files selected for commit.' });
+        return;
+      }
+
+      for (let i = 0; i < total; i++) {
         const fileData = targets[i];
         let currentDirHandle = rootHandle;
+
+        this.bus.publish({
+          type: 'PROCESS_PROGRESS',
+          payload: { current: i + 1, total }
+        });
+
+        let fileFeature = null;
 
         try {
           for (const folderName of fileData.parts) {
@@ -269,32 +311,71 @@ class ZipProcessor {
             await writable.close();
           }
 
-          successCount++;
-          logs.push({ path: fileData.displayPath, status: 'SUCCESS', error: null });
-
-          if (!firstCopiedSecondLine && !fileData.isBinary) {
-            firstCopiedSecondLine = this.extractSecondLine(fileData.content);
+          if (!fileData.isBinary) {
+            if (!firstCopiedSecondLine) {
+              const line2 = this.extractNthLine(fileData.content, 2);
+              if (line2) firstCopiedSecondLine = line2;
+            }
+            
+            const line3 = this.extractNthLine(fileData.content, 3);
+            if (line3) {
+              if (!firstCopiedThirdLine) firstCopiedThirdLine = line3;
+              fileFeature = this.parseFeatureInfo(line3);
+            }
           }
+
+          const userChangeType = changeTypesMap[fileData.index] || (fileData.exists ? 'updated' : 'new');
+
+          successCount++;
+          logs.push({ 
+            path: fileData.displayPath, 
+            status: 'SUCCESS', 
+            error: null,
+            feature: fileFeature,
+            changeType: userChangeType
+          });
         } catch (fileErr) {
           failCount++;
           const errMsg = fileErr.message || String(fileErr);
-          logs.push({ path: fileData.displayPath, status: 'FAILED', error: errMsg });
+          logs.push({ 
+            path: fileData.displayPath, 
+            status: 'FAILED', 
+            error: errMsg,
+            feature: null,
+            changeType: 'updated'
+          });
           console.error(`Fibo Write Error [${fileData.displayPath}]:`, fileErr);
         }
 
-        if (i > 0 && i % 10 === 0) {
-          await new Promise(resolve => setTimeout(resolve, 0));
+        if (i > 0 && i % 5 === 0) {
+          await new Promise(resolve => setTimeout(resolve, 15));
         }
       }
 
       if (enableLogging) {
-        await this.writeAutoLog(rootHandle, logs, successCount, failCount, firstCopiedSecondLine);
+        await this.writeAutoLog(
+          rootHandle, 
+          logs, 
+          successCount, 
+          failCount, 
+          firstCopiedSecondLine || 'N/A (No Line 2 Present)',
+          firstCopiedThirdLine
+        );
+      }
+
+      if (enableEvents) {
+        await this.writeEventJson(
+          rootHandle,
+          logs,
+          firstCopiedSecondLine,
+          firstCopiedThirdLine
+        );
       }
 
       this.clearState();
       this.bus.publish({
         type: 'PROCESS_COMPLETE',
-        payload: { successCount, failCount, logs, loggingEnabled: enableLogging }
+        payload: { successCount, failCount, logs, loggingEnabled: enableLogging, eventsEnabled: enableEvents }
       });
     } catch (err) {
       this.clearState();
@@ -305,7 +386,7 @@ class ZipProcessor {
 
   async getRotatedLogHandle(logDirHandle, year, month) {
     const baseName = `fzfd-${year}-${month}`;
-    const MAX_BYTES = 1024 * 1024; // 1 MB threshold
+    const MAX_BYTES = 1024 * 1024;
     let index = 1;
 
     while (true) {
@@ -321,7 +402,7 @@ class ZipProcessor {
     }
   }
 
-  async writeAutoLog(rootHandle, logs, successCount, failCount, line2Header) {
+  async writeAutoLog(rootHandle, logs, successCount, failCount, line2Header, line3Header) {
     try {
       const logDirHandle = await rootHandle.getDirectoryHandle('FZFDlog', { create: true });
       
@@ -334,8 +415,9 @@ class ZipProcessor {
       const timestamp = now.toISOString();
       const headerLine1 = `[TIMESTAMP: ${timestamp}] | SUCCESS: ${successCount} | FAILED: ${failCount}`;
       const headerLine2 = `[STAMP LINE 2]: ${line2Header || 'N/A'}`;
+      const headerLine3 = line3Header ? `[STAMP LINE 3 / FEATURE]: ${line3Header}\n` : '';
 
-      let logBlock = `${headerLine1}\n${headerLine2}\n`;
+      let logBlock = `${headerLine1}\n${headerLine2}\n${headerLine3}`;
       logs.forEach(l => {
         logBlock += `  - [${l.status}] ${l.path}${l.error ? ` (Error: ${l.error})` : ''}\n`;
       });
@@ -350,6 +432,52 @@ class ZipProcessor {
       }
     } catch (logErr) {
       console.error("FZFD Auto-Logging Error:", logErr);
+    }
+  }
+
+  async writeEventJson(rootHandle, logs, secondLine, thirdLine) {
+    try {
+      const eventsDirHandle = await rootHandle.getDirectoryHandle('events', { create: true });
+      
+      const now = new Date();
+      const isoTimestamp = now.toISOString();
+      const compactStamp = isoTimestamp.replace(/[:\-.]/g, '');
+      const fileName = `extension-${compactStamp}.json`;
+
+      const line2Info = this.parseLine2Info(secondLine);
+      const globalFeature = this.parseFeatureInfo(thirdLine);
+
+      const filesPayload = logs.map(l => {
+        const featureName = l.feature || globalFeature;
+        const entry = {
+          path: l.path,
+          status: l.status === 'SUCCESS' ? 'success' : 'error',
+          change_type: l.changeType || 'updated'
+        };
+        if (featureName) {
+          entry.expects = { feature: featureName };
+        }
+        return entry;
+      });
+
+      const batchPayload = {
+        timestamp: isoTimestamp,
+        date: line2Info.date,
+        model: line2Info.model,
+        chat_name: line2Info.chatName,
+        source: 'extension',
+        files: filesPayload
+      };
+
+      const eventFileHandle = await eventsDirHandle.getFileHandle(fileName, { create: true });
+      const writable = await eventFileHandle.createWritable();
+      try {
+        await writable.write(JSON.stringify(batchPayload, null, 2));
+      } finally {
+        await writable.close();
+      }
+    } catch (err) {
+      console.error("FZFD Event JSON Write Error:", err);
     }
   }
 

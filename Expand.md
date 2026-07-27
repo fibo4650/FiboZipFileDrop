@@ -1,117 +1,89 @@
-# Feature Expansion Blueprint & Roadmap: Fibo Zip File Drop
 
-This document is the standalone product extension manual and feature roadmap for the "Fibo Zip File Drop" Chrome Extension. When provided to an AI agent, its purpose is to guide the implementation of new features, performance optimizations, and UI upgrades without violating architectural constraints.
 
----
+<!-- Expand.md -->
+<!-- Gemini 3.6 | FZFD Header & Log Stamp | 2026-07-27 -->
 
-## 1. Baseline Execution Architecture & Constraints
+# Fibo Zip File Drop: Feature Expansion Roadmap
 
-All new features and refactoring tasks must strictly respect the core execution environment:
-
-* **Runtime Framework:** Chrome Extension Manifest V3 (MV3).
-* **Injection Paradigm:** Sequential, flat global content scripts listed in `manifest.json`. **Do NOT use `import` or `export` syntax**, as host website Content Security Policies (CSPs) will block module execution.
-* **Interface Layer:** Closed Shadow DOM encapsulation (`#fibo-zip-drop-root`). All new buttons, textareas, progress bars, overlays, or CSS styles must reside inside the shadow root.
-* **Two-Stage Workflow Lifecycle:**
-  1. **Staging Phase:** Scan input (ZIP archive / single file / raw text) $\rightarrow$ parse line 1 path comment $\rightarrow$ evaluate disk conflict state $\rightarrow$ publish memory staging array (`ZIP_STAGED`).
-  2. **Commit Phase:** Render conflict review matrix $\rightarrow$ collect approved overwrite index choices $\rightarrow$ batch write to local file system via File System Access API.
+This document serves as the implementation manual and roadmap for AI agents extending the capabilities of the Fibo Zip File Drop extension.
 
 ---
 
-## 2. System Architecture & File Structure Map
+## 1. System Architecture Map
 
 ```text
 fibo-zip-drop/
-├── manifest.json          # Extension manifest, permissions, & content script array order
-├── background.js          # MV3 Service Worker (Headless background context; no DOM access)
+├── manifest.json          # Extension configuration & content script load order
+├── background.js          # Headless MV3 service worker
 ├── content.js             # Master UI coordinator & Shadow DOM sidebar renderer
 ├── vendor/
-│   └── jszip.min.js       # Production library for multi-file ZIP decoding
+│   └── jszip.min.js       # Production JSZip decoding library
 ├── core/
-│   └── event-bus.js       # Decoupled system event bus
+│   └── event-bus.js       # Decoupled publish/subscribe messaging bus
 └── features/
-    ├── file-picker.js     # Native File System Access API workspace handle manager
-    └── zip-processor.js   # Buffer extraction, text path parsing, auto-logging & disk writer
+    ├── file-picker.js     # Native File System Access API workspace manager
+    └── zip-processor.js   # Extraction engine, path parser, log & event generator
 ```
 
-### Decoupled System Event Routing Matrix
+---
 
-| Event Type | Emitted By | Payload Structure | System Action |
-| :--- | :--- | :--- | :--- |
-| `WORKSPACE_READY` | `FilePicker` | `string` (Folder Name) | Updates connect button to green bound state. |
-| `WORKSPACE_ERROR` | `FilePicker` | `string` (Error Text) | Resets state, displays alert in status tray. |
-| `PROCESS_START` | `ZipProcessor` | `string` (File/Archive Name) | Shifts status UI to analysis mode. |
-| `ZIP_STAGED` | `ZipProcessor` | `Array<StagedFileObject>` | Triggers UI morph from dropzone to conflict review matrix. |
-| `PROCESS_PROGRESS`| `ZipProcessor` | `{ current: number, total: number }` | Updates real-time write progress bar component. |
-| `PROCESS_COMPLETE`| `ZipProcessor` | `{ successCount, failCount, logs, loggingEnabled }` | Displays completion statistics and log download button. |
-| `PROCESS_ERROR` | `ZipProcessor` | `string` (Error Text) | Resets view and displays error notification. |
+## 2. Completed Feature Capabilities
+
+* [x] **Fault-Tolerant Batch Commits:** Non-halting upload loop with individual file error trapping and in-app execution logs.
+* [x] **Multi-Mode Input Engine:** Tabbed interface supporting ZIP archives, single/multi-file drops, and raw text paste buffer.
+* [x] **Strict Extension Path Parser:** Regex parser (`/\.[a-zA-Z0-9]{1,10}$/`) eliminating false positives from prose headers.
+* [x] **Master Overwrite Toggle ("Select / Deselect All"):** Global master checkbox for toggling all overwrite checkboxes for visible rows.
+* [x] **Real-Time Staging Search Bar:** Sticky search input filtering visible matrix rows via CSS (`display: none`) without desynchronizing item indices.
+* [x] **Visual Progress Milestones:** Throttled batch commits publishing `PROCESS_PROGRESS` to drive an animated progress bar.
+* [x] **Re-Connect Directory Handle:** Capability to switch or re-bind workspace folders without reloading the webpage.
+* [x] **Line 3 Feature Directive Parser:** Extraction of `// feature: <feature_id>` headers.
+* [x] **Dual-Channel Logging & Event Generation:** Human-readable logs in `/FZFDlog` and structured JSON event batches in `/events` conforming to `file-event.schema.json`.
+* [x] **Per-File `change_type` Selector:** Interactive dropdown (`new`, `updated`, `replaced`, `appended`, `deleted`) preset by disk existence state.
+* [x] **Persistent Event Emitter Toggle:** Option checkbox (`emitEventsToggle`) linked to `localStorage` (`fzfd_emit_events`).
 
 ---
 
-## 3. Feature Implementation Status
-
-### ✅ Completed Features
-* [x] **Fault-Tolerant File Commits:** Non-halting batch processing with in-app error log modal.
-* [x] **Log File Export:** Downloadable `.txt` run logs directly from the Shadow DOM UI.
-* [x] **Multi-Mode Input Engine:** Tabbed interface supporting ZIP archives, single file drops, and raw text paste input.
-* [x] **Line 1 Path Validation for Raw Text:** Mandatory validation forcing explicit comment path directives on line 1 for raw text.
-* [x] **Strict Extension Regex Parser:** Anti-false-positive parser (`/\.[a-zA-Z0-9]{1,10}$/`) ensuring prose headers with dots aren't misidentified as file paths.
-* [x] **Workspace Auto-Logging:** Automatic appending to `FZFDlog/fzfd-YYYY-MM.log` with 1 MB rotation guard.
-* [x] **Persistent Auto-Log Toggle:** UI checkbox linked to `localStorage` (`fzfd_auto_log`).
-
----
-
-## 4. High-Priority Feature Backlog (AI Implementation Specifications)
+## 3. High-Priority Expansion Backlog (AI Specifications)
 
 AI agents implementing new capabilities should select from the following modules:
 
-### 🚀 Module A: Frontend UX Quality-of-Life Upgrades
+### 🚀 Module A: Advanced UI & Visual Inspection
 
-#### A.1 Global Overwrite Toggle ("Select All / Deselect All")
-* **Objective:** Prevent users from having to manually click dozens of checkboxes when a project needs to be fully overwritten.
-* **Implementation Requirements:**
-  * Inject a master checkbox toggle button at the top of the `.fibo-file-list` container.
-  * Toggling it must programmatically check or uncheck all visible `.fibo-replace-check` elements.
-  * State changes must dynamically update the execution indices bundle passed to `commitUpload()`.
+#### A.1 Full-Screen Drag-and-Drop Backdrop Overlay
+* **Objective:** Provide a page-wide dropzone indicator when dragging files anywhere over the browser window.
+* **Requirements:**
+  * Bind `dragover` and `dragleave` window event listeners in `content.js`.
+  * Toggle a full-screen backdrop overlay inside the closed Shadow DOM (`#fibo-zip-drop-root`).
+  * Drop events anywhere on the backdrop route directly to `processInputFiles()`.
 
-#### A.2 Real-Time Staging Filter & Search Bar
-* **Objective:** Allow developers to search through large archives to inspect specific component target paths.
-* **Implementation Requirements:**
-  * Place a sticky search text input right above the file list inside the sidebar panel.
-  * Filter visible rows based on substring match against `displayPath`.
-  * Hiding unmatched items must use CSS (`display: none`) so underlying input element indices remain intact.
-
-#### A.3 Full-Screen Drag-and-Drop Overlay
-* **Objective:** Provide a clear visual drop zone indicator when dragging files anywhere over the active web page window.
-* **Implementation Requirements:**
-  * Bind `dragover` / `dragleave` window events to toggle a full-screen backdrop overlay inside the Shadow DOM container.
+#### A.2 Side-by-Side Diff Preview Modal
+* **Objective:** Allow developers to inspect file differences before confirming an overwrite.
+* **Requirements:**
+  * Add an inspection icon (`🔍`) next to existing files in the staging matrix.
+  * Upon clicking, read the existing file content from disk using `rootHandle.getFileHandle()`.
+  * Render a line-by-line diff modal inside the Shadow DOM overlay.
 
 ---
 
-### ⚙️ Module B: Deep Core Engine Upgrades
+### ⚙️ Module B: Storage & Framework Integration Upgrades
 
-#### B.1 Binary Asset Handling & ZIP Relative Path Fallback
-* **Objective:** Prevent binary files (images, audio, fonts) from having their binary buffers corrupted by text comment parsing.
-* **Implementation Requirements:**
-  * Maintain a binary extension whitelist/blacklist in `ZipProcessor`. Skip line 1 comment checks for binary assets.
-  * **Fallback Mapping Rule:** For binary assets (or text files lacking line 1 comments), fall back to using the ZIP archive's native internal folder path (`relativePath`) to generate local disk target paths.
+#### B.1 Automatic Event Clean-up & Archiving
+* **Objective:** Manage processed event files inside the target workspace.
+* **Requirements:**
+  * Add a utility method to inspect `/events/` and move event files older than $N$ days into `/events/processed/`.
 
-#### B.2 Async Chunking & Thread Preservation (`PROCESS_PROGRESS`)
-* **Objective:** Prevent browser tab thread freezing during heavy file write operations.
-* **Implementation Requirements:**
-  * Refactor `commitUpload()` in `ZipProcessor` to write files in throttled batch chunks (e.g., write 10 files, pause 20ms using macro-task timeout, then resume).
-  * Publish progressive `PROCESS_PROGRESS` payloads (`{ current, total }`) via `EventBus` to drive a visual progress bar in the UI.
-
-#### B.3 Unique Index Pointer Mapping
-* **Objective:** Eliminate checkbox desynchronization caused by path string collisions.
-* **Implementation Requirements:**
-  * Assign unique numeric IDs to staged file objects and track UI approvals via ID/index pointers instead of string path lookup keys.
+#### B.2 Workspace Workspace Presets & Alias Names
+* **Objective:** Allow users to save multiple root directory handles (e.g., "Frontend Repo", "Backend API") and switch between them via a dropdown selector.
+* **Requirements:**
+  * Store directory handle references in IndexedDB (since `FileSystemHandle` instances cannot be serialized directly in `localStorage`).
+  * Provide a selector dropdown above the connect button.
 
 ---
 
-## 5. Acceptance Criteria for Expansions
+## 4. Expansion Acceptance Standard
 
-Before declaring any feature extension complete, verify:
+Before marking any new feature complete:
+1. Confirm zero ES module `import`/`export` keywords are added to content script files.
+2. Verify all UI elements remain strictly inside the closed Shadow DOM.
+3. Ensure `processor.clearState()` is called on cancel, completion, and mode navigation.
 
-1. **No Module Drift:** No ES module `import`/`export` keywords added to content scripts.
-2. **Shadow Security:** All UI elements reside strictly inside the closed Shadow DOM root.
-3. **Memory State Cleanup:** `processor.clearState()` is called on completion, cancellation, and panel close.
