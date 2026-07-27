@@ -1,3 +1,6 @@
+// content.js
+// Gemini | FZFD builder 2 : errors and log | 2026-07-22
+
 let fiboPanelInstance = null;
 let isPushedOpen = false;
 
@@ -18,13 +21,29 @@ function bootstrapFibo() {
       position: fixed; top: 0; right: -320px; bottom: 0; z-index: 2147483647;
       font-family: system-ui, -apple-system, sans-serif; font-size: 13px;
       background: #1e1e2e; color: #cdd6f4; border-left: 1px solid #45475a;
-      width: 280px; padding: 20px; display: flex; flex-direction: column; gap: 15px;
+      width: 280px; padding: 20px; display: flex; flex-direction: column; gap: 12px;
       box-shadow: -4px 0 24px rgba(0,0,0,0.4); transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     }
     .fibo-sidebar.open { right: 0; }
     .fibo-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #45475a; padding-bottom: 10px; }
     .fibo-title { font-weight: bold; font-size: 14px; color: #f5e0dc; }
     .fibo-close { background: none; border: none; color: #a6adc8; cursor: pointer; font-size: 16px; }
+    
+    .fibo-nav { display: flex; gap: 6px; background: #181825; padding: 4px; border-radius: 6px; border: 1px solid #45475a; }
+    .fibo-nav-btn {
+      flex: 1; background: transparent; border: none; color: #a6adc8; padding: 6px;
+      border-radius: 4px; font-size: 11px; font-weight: bold; cursor: pointer; transition: 0.2s;
+    }
+    .fibo-nav-btn.active { background: #313244; color: #89b4fa; }
+
+    .fibo-option-row {
+      display: flex; align-items: center; gap: 6px; font-size: 11px; color: #a6adc8;
+      background: #181825; padding: 6px 8px; border-radius: 6px; border: 1px solid #313244;
+    }
+    .fibo-checkbox-label {
+      display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; width: 100%;
+    }
+
     .fibo-btn {
       width: 100%; background: #89b4fa; color: #11111b; border: none;
       padding: 10px; border-radius: 6px; font-weight: bold; cursor: pointer; transition: 0.2s;
@@ -41,10 +60,17 @@ function bootstrapFibo() {
     .fibo-dropzone.active { border-color: #a6e3a1; background: rgba(166, 227, 161, 0.1); color: #a6e3a1; }
     .fibo-hint { font-size: 10px; color: #6c7086; margin-top: 4px; }
 
+    .fibo-textarea {
+      width: 100%; flex-grow: 1; min-height: 150px; background: #181825; color: #cdd6f4;
+      border: 1px solid #45475a; border-radius: 6px; padding: 8px; font-family: monospace;
+      font-size: 11px; resize: none; box-sizing: border-box; outline: none;
+    }
+    .fibo-textarea:focus { border-color: #89b4fa; }
+
     .fibo-file-list {
       flex-grow: 1; overflow-y: auto; background: #181825;
       border: 1px solid #45475a; border-radius: 6px; padding: 8px;
-      display: flex; flex-direction: column; gap: 8px; max-height: 50vh;
+      display: flex; flex-direction: column; gap: 8px; max-height: 40vh;
     }
     .fibo-file-item {
       display: flex; align-items: center; justify-content: space-between;
@@ -67,7 +93,7 @@ function bootstrapFibo() {
     .fibo-log-box {
       font-family: monospace; font-size: 10px; background: #11111b;
       border: 1px solid #45475a; border-radius: 6px; padding: 8px;
-      max-height: 150px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px;
+      max-height: 130px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px;
     }
     .fibo-log-success { color: #a6e3a1; }
     .fibo-log-fail { color: #f38ba8; }
@@ -82,13 +108,22 @@ function bootstrapFibo() {
     </div>
     <button class="fibo-btn" id="connectBtn">📁 Connect Local Dir</button>
     <div class="fibo-status" id="statusText">System Unbound</div>
-    <div id="dynamicContentZone" style="display: flex; flex-direction: column; flex-grow: 1; gap: 15px;">
-      <div class="fibo-dropzone" id="dropZone">
-        <span>Slide ZIP Here</span>
-        <span class="fibo-hint">(or click to browse downloads)</span>
-      </div>
+    
+    <div class="fibo-nav">
+      <button class="fibo-nav-btn active" id="modeFileBtn">📦 File / ZIP</button>
+      <button class="fibo-nav-btn" id="modeTextBtn">📝 Raw Text</button>
     </div>
-    <input type="file" id="hiddenFileInput" accept=".zip" style="display: none;" />
+
+    <div class="fibo-option-row">
+      <label class="fibo-checkbox-label">
+        <input type="checkbox" id="autoLogToggle" /> Auto-log to /FZFDlog
+      </label>
+    </div>
+
+    <div id="dynamicContentZone" style="display: flex; flex-direction: column; flex-grow: 1; gap: 12px;">
+      <!-- Dynamic view content -->
+    </div>
+    <input type="file" id="hiddenFileInput" style="display: none;" />
   `;
 
   shadow.appendChild(style);
@@ -97,45 +132,99 @@ function bootstrapFibo() {
 
   const connectBtn = fiboPanelInstance.querySelector('#connectBtn');
   const statusText = fiboPanelInstance.querySelector('#statusText');
-  const dropZone = fiboPanelInstance.querySelector('#dropZone');
   const closeBtn = fiboPanelInstance.querySelector('#closeBtn');
   const hiddenFileInput = fiboPanelInstance.querySelector('#hiddenFileInput');
   const dynamicContentZone = fiboPanelInstance.querySelector('#dynamicContentZone');
+  const modeFileBtn = fiboPanelInstance.querySelector('#modeFileBtn');
+  const modeTextBtn = fiboPanelInstance.querySelector('#modeTextBtn');
+  const autoLogToggle = fiboPanelInstance.querySelector('#autoLogToggle');
 
-  const initiateZipScan = async (file) => {
+  // Load persistent auto-log preference (defaults to true)
+  const savedAutoLog = localStorage.getItem('fzfd_auto_log');
+  autoLogToggle.checked = savedAutoLog === null ? true : savedAutoLog === 'true';
+
+  autoLogToggle.onchange = (e) => {
+    localStorage.setItem('fzfd_auto_log', e.target.checked);
+  };
+
+  let currentMode = 'FILE';
+
+  const renderFileModeView = () => {
+    currentMode = 'FILE';
+    modeFileBtn.classList.add('active');
+    modeTextBtn.classList.remove('active');
+
+    dynamicContentZone.innerHTML = `
+      <div class="fibo-dropzone" id="dropZone">
+        <span>Slide File or ZIP Here</span>
+        <span class="fibo-hint">(or click to browse local files)</span>
+      </div>
+    `;
+
+    const dropZone = dynamicContentZone.querySelector('#dropZone');
+    dropZone.onclick = () => hiddenFileInput.click();
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('active'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('active'));
+    dropZone.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('active');
+      if (e.dataTransfer.files.length > 0) {
+        await processInputFile(e.dataTransfer.files[0]);
+      }
+    });
+  };
+
+  const renderTextModeView = () => {
+    currentMode = 'TEXT';
+    modeTextBtn.classList.add('active');
+    modeFileBtn.classList.remove('active');
+
+    dynamicContentZone.innerHTML = `
+      <textarea class="fibo-textarea" id="rawTextArea" placeholder="// path/to/file.js&#10;console.log('Paste code here...');"></textarea>
+      <button class="fibo-btn" id="stageTextBtn" style="background: #cba6f7;">⚡ Analyze Raw Text</button>
+    `;
+
+    dynamicContentZone.querySelector('#stageTextBtn').onclick = async () => {
+      const text = dynamicContentZone.querySelector('#rawTextArea').value;
+      if (!await checkWorkspacePermission()) return;
+      await processor.stageRawText(text, picker.directoryHandle);
+    };
+  };
+
+  const checkWorkspacePermission = async () => {
     if (!picker.directoryHandle) {
       statusText.innerHTML = "<span style='color: #f38ba8;'>⚠️ Attach target folder first!</span>";
-      return;
+      return false;
     }
     const hasPerm = await picker.verifyPermission(true);
     if (!hasPerm) {
       statusText.innerHTML = "<span style='color: #f38ba8;'>⚠️ Permission revoked by user</span>";
-      return;
+      return false;
     }
+    return true;
+  };
 
-    if (file && file.name.endsWith('.zip')) {
+  const processInputFile = async (file) => {
+    if (!await checkWorkspacePermission()) return;
+
+    if (file.name.endsWith('.zip')) {
       await processor.stageZip(file, picker.directoryHandle);
     } else {
-      statusText.innerHTML = "<span style='color: #f38ba8;'>❌ Rejected: Not a valid .zip archive</span>";
+      await processor.stageSingleFile(file, picker.directoryHandle);
     }
   };
 
   connectBtn.onclick = async () => { await picker.selectDirectory(); };
   closeBtn.onclick = () => { handleToggle(false); };
-  dropZone.onclick = () => { hiddenFileInput.click(); };
+  modeFileBtn.onclick = () => { renderFileModeView(); };
+  modeTextBtn.onclick = () => { renderTextModeView(); };
 
   hiddenFileInput.onchange = async (e) => {
-    await initiateZipScan(e.target.files[0]);
-    hiddenFileInput.value = "";
+    if (e.target.files.length > 0) {
+      await processInputFile(e.target.files[0]);
+      hiddenFileInput.value = "";
+    }
   };
-
-  dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('active'); });
-  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('active'));
-  dropZone.addEventListener('drop', async (e) => {
-    e.preventDefault();
-    dropZone.classList.remove('active');
-    await initiateZipScan(e.dataTransfer.files[0]);
-  });
 
   bus.subscribe('ZIP_STAGED', (e) => {
     const files = e.payload;
@@ -167,7 +256,7 @@ function bootstrapFibo() {
 
     dynamicContentZone.querySelector('#cancelBtn').onclick = () => {
       processor.clearState();
-      resetToDropzone();
+      resetToDefaultView();
     };
 
     dynamicContentZone.querySelector('#sendBtn').onclick = async () => {
@@ -185,15 +274,22 @@ function bootstrapFibo() {
       });
 
       dynamicContentZone.innerHTML = `<div class="fibo-status">⚡ Writing files to disk...</div>`;
-      await processor.commitUpload(approvedPaths, picker.directoryHandle);
+      
+      const enableLogging = autoLogToggle.checked;
+      await processor.commitUpload(approvedPaths, picker.directoryHandle, enableLogging);
     };
   });
 
-  function resetToDropzone() {
+  function resetToDefaultView() {
     statusText.innerText = picker.directoryHandle ? `Folder: ${picker.directoryHandle.name}` : "System Unbound";
-    dynamicContentZone.innerHTML = '';
-    dynamicContentZone.appendChild(dropZone);
+    if (currentMode === 'FILE') {
+      renderFileModeView();
+    } else {
+      renderTextModeView();
+    }
   }
+
+  renderFileModeView();
 
   bus.subscribe('WORKSPACE_READY', (e) => {
     connectBtn.innerText = "✅ Target Bound";
@@ -202,16 +298,16 @@ function bootstrapFibo() {
     statusText.innerText = `Folder: ${e.payload}`;
   });
 
-  bus.subscribe('PROCESS_START', () => { statusText.innerText = `⚡ Analyzing archive structure...`; });
+  bus.subscribe('PROCESS_START', () => { statusText.innerText = `⚡ Analyzing input structure...`; });
 
   bus.subscribe('PROCESS_COMPLETE', (e) => {
-    const { successCount, failCount, logs } = e.payload;
-    resetToDropzone();
+    const { successCount, failCount, logs, loggingEnabled } = e.payload;
+    resetToDefaultView();
 
     let statusColor = failCount === 0 ? '#a6e3a1' : '#f38ba8';
-    statusText.innerHTML = `<span style='color: ${statusColor};'>Saved: ${successCount} | Failed: ${failCount}</span>`;
+    let logNote = loggingEnabled ? ' (Logged to FZFDlog)' : ' (Auto-log disabled)';
+    statusText.innerHTML = `<span style='color: ${statusColor};'>Saved: ${successCount} | Failed: ${failCount}${logNote}</span>`;
 
-    // Render detailed Execution Log inside the Shadow DOM view
     let logHtml = `<div class="fibo-log-box">`;
     logs.forEach(log => {
       const isOk = log.status === 'SUCCESS';
@@ -242,7 +338,7 @@ function bootstrapFibo() {
   });
 
   bus.subscribe('PROCESS_ERROR', (e) => {
-    resetToDropzone();
+    resetToDefaultView();
     statusText.innerHTML = `<span style='color: #f38ba8;'>🚨 Error: ${e.payload}</span>`;
   });
 

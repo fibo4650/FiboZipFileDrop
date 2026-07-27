@@ -1,58 +1,88 @@
-# Product Specification & Lore: Fibo Zip File Drop (Rebuild Blueprint)
+# Product Specification, Lore & Architectural Record: Fibo Zip File Drop
 
-This document is the absolute source of truth for the product identity, philosophy, user experience, and historical lessons of the Fibo Zip File Drop ecosystem. If this project is ever rebuilt from scratch—even using completely different framework paradigms or programming languages—these core product pillars and hard-won lessons must be strictly maintained.
+This document is the absolute source of truth for the product identity, philosophy, user experience, feature capabilities, and historical technical lessons of the Fibo Zip File Drop ecosystem. If this project is rebuilt or extended, these core product pillars and hard-won lessons must be strictly maintained.
 
 ---
 
 ## 1. Product Core & Purpose
-Fibo Zip File Drop is a specialized developer workflow accelerator built as a desktop browser extension. Its single purpose is to act as an instantaneous bridge between ephemeral online sandboxes (like LLM chats or cloud coding interfaces) and the developer's local hard drive.
+
+Fibo Zip File Drop is a specialized developer workflow accelerator built as a desktop browser extension (Manifest V3). Its single purpose is to act as an instantaneous, non-invasive bridge between ephemeral online sandboxes (like LLM chats or cloud coding interfaces) and the developer's local hard drive.
 
 ### The Problem it Solves
-Modern AI code generation environments frequently output project updates as flat, single-level ZIP archives containing dozens of files. However, the *true* intended folder structure of these files is written manually as a code comment on the very first line of each individual file (e.g., `// lib/ui/components/Button.js`). Manually recreating these folders and placing files one by one destroys developer velocity.
+Modern AI code generation environments frequently output multi-file project updates as flat, single-level ZIP archives containing dozens of files. However, the *true* intended folder structure of these files is written manually as a code comment on the very first line of each individual file (e.g., `// lib/ui/components/Button.js`). Manually recreating these folders and placing files one by one destroys developer velocity.
 
 ---
 
 ## 2. Product Philosophy & UX Architecture
 
 ### Design Philosophy
-*   **Zero Invasiveness:** The tool must sit silently in the background until explicitly invoked. It must never alter the native layout or performance of the host website.
-*   **Absolute Transparency:** The tool deals with local file systems. Developers must never feel like files are being modified blindly behind their backs. Visual confirmation must precede every disk mutation.
+* **Zero Invasiveness:** The tool sits silently in the background until explicitly invoked. It never alters the layout, DOM, or performance of host websites.
+* **Absolute Transparency:** The tool interacts with local file systems. Developers must never feel that files are being written blindly behind their backs. Visual conflict confirmation must precede every disk mutation.
 
-### The Standard User Journey (UX Flow)
-1.  **Invocation:** The user clicks the extension icon in their toolbar. A streamlined sidebar panel slides into view over the current webpage.
-2.  **Target Binding:** The user selects a root local workspace folder via a single action button. This sets the boundary for all future operations.
-3.  **The Staging Drop:** The user drags a flat ZIP archive from their downloads tracker (or clicks to browse their system) and drops it onto the sidebar.
-4.  **The Conflict Review Matrix:** The sidebar instantly morphs from a dropzone into a scrollable preview inventory matrix. 
-    *   Files that *do not* exist in the local workspace are flagged as `new`.
-    *   Files that *already exist* inside the targeted directory tree display an unchecked overwrite box.
-5.  **Commit:** The user selectively ticks files they wish to overwrite and hits a single execution button. The directory tree is generated dynamically, files are written, and the panel returns to a clean drop state with a success notification.
-
----
-
-## 3. The Hard Lessons: Historical Non-Obvious Bugs & Breakdowns
-*Do not let a fresh AI architecture fall into these exact traps. These issues were discovered and solved through trial and error.*
-
-### 🛠️ The Flat ZIP Paradox
-*   **The Trap:** A generic AI will look at a ZIP file and use traditional extraction libraries to recreate paths based on the archive's internal folder directories.
-*   **The Reality:** The ZIP files processed by this product are physically flat. The folders do not exist in the archive metadata. The extension *must* open each file, read the first line of text, parse out the comment markers, and dynamically deduce the structural tree from that plain text string.
-
-### 🛠️ The Extension Script Injection Conflict (CSP Vector)
-*   **The Trap:** Attempting to build the extension using modern modular architectures (like ES Modules with standard `import`/`export` keywords) injected directly into the tab.
-*   **The Reality:** High-security production sites feature strict Content Security Policies (CSP). Injecting modules into the host page context will cause immediate syntax block errors. Files injected into the browser tab must either run as a flat, sequential execution sequence or be fully sandboxed out of the host document's namespace.
-
-### 🛠️ The Disappearing Toolbar Arrow & Permission Reset
-*   **The Trap:** Assuming that browser toolbar icons are permanent features.
-*   **The Reality:** Browsers dynamically manage toolbar real estate. When the extension is reloaded, updated, or when permissions are changed on secure tabs, Chrome frequently resets the tab's active download tracking state and pushes the extension icon out of sight. A click-to-browse fallback file selection workflow inside the UI is mandatory so the user is never stranded if drag-and-drop elements become inaccessible due to security resets.
+### The Two-Stage User Journey (UX Flow)
+1. **Invocation:** The user left-clicks the extension toolbar icon. A streamlined sidebar panel slides open over the current webpage (isolated inside a closed Shadow DOM).
+2. **Target Binding:** The user binds a root local workspace folder via a single action button (`FileSystemDirectoryHandle`).
+3. **Multi-Mode Input Staging:**
+   * **ZIP Mode:** User drops a flat ZIP archive onto the dropzone or browses local files.
+   * **Single File Mode:** User drops or selects individual non-zip files (`.js`, `.md`, `.json`, etc.).
+   * **Raw Text Mode:** User switches to the "Raw Text" tab and pastes code directly into a `<textarea>`.
+4. **The Conflict Review Matrix:** The sidebar morphs from input mode into a scrollable preview inventory matrix:
+   * Files that *do not* exist in the local workspace are flagged as `new`.
+   * Files that *already exist* inside the targeted directory tree display an unchecked overwrite confirmation box.
+5. **Commit Phase:** The user selectively checks files to overwrite and clicks "Send & Process". Directories are created recursively, files are written, an execution log is generated, and the panel returns to a clean state.
 
 ---
 
-## 4. Critical Architectural Decisions (Non-Negotiable)
+## 3. Core Feature Architecture & Capabilities
+
+### 🧭 Multi-Mode Input Engine
+* **ZIP Archives:** Processed via `JSZip`, parsing file entry headers and compiling a staging state array.
+* **Single Files:** Ingested via native Blob/File API, reading line 1 path comments or falling back to the workspace root.
+* **Raw Text Panel:** Tabbed interface with single-click toggle and paste buffer. Requires an explicit line 1 path comment directive (e.g., `// src/app.js`); rejects unpath'd snippets to prevent accidental filesystem pollution.
+
+### 📝 System Logging Governance
+* **Direct Disk Writes:** Automatically appends execution logs directly into the target project under `/FZFDlog`.
+* **Stamp Protocol:** Each log entry records an ISO timestamp, success/fail counts, and the exact second line (header stamp) of the first non-binary text file processed.
+* **Monthly Log Rotation:** Log files are named `fzfd-YYYY-MM.log`. When a log reaches 1 MB (`1,048,576` bytes), it automatically rotates to `fzfd-YYYY-MM-part2.log`, `part3`, etc.
+* **User Sovereignty:** Auto-logging can be toggled on/off at any time in the UI panel (preference persisted via `localStorage` key `fzfd_auto_log`). Users can also download an in-app `.txt` execution log.
+
+---
+
+## 4. The Hard Lessons: Historical Bugs & Breakdowns
+
+*Do not let future implementations fall into these exact traps. These issues were discovered and resolved through empirical trial and error:*
+
+### 🛠️ 1. The Flat ZIP Paradox
+* **The Trap:** Using traditional extraction libraries to recreate paths based solely on the ZIP archive's internal folder metadata.
+* **The Reality:** ZIP files generated by LLMs are physically flat; internal subfolder metadata is often missing. The extension *must* inspect each file, read line 1 text comments, parse out comment markers, and dynamically construct the target folder tree.
+
+### 🛠️ 2. The Extension Script Injection Conflict (CSP Vector)
+* **The Trap:** Building content scripts using modern ES Modules (`import`/`export` keywords).
+* **The Reality:** High-security production sites feature strict Content Security Policies (CSP) that block external module loading. Content scripts MUST run as a flat, sequential execution sequence without `import`/`export` statements.
+
+### 🛠️ 3. False-Positive Path Directives (Prose Text Extensions)
+* **The Trap:** Naive path regexes matching file extensions anywhere inside header comment text (e.g., `# Addendum to Phase3_Merlin_Blueprint.md — Block 7`).
+* **The Reality:** Prose comments mentioning filenames trick the parser into renaming files to garbage strings. Path directives MUST strictly end with a valid file extension (`/\.[a-zA-Z0-9]{1,10}$/`) and MUST NOT contain protocols (`://`).
+
+### 🛠️ 4. File System Writable Stream Seek Errors
+* **The Trap:** Attempting to query `.size` on a `FileSystemWritableFileStream` object (e.g., `writable.seek(writable.size)`).
+* **The Reality:** `FileSystemWritableFileStream` does NOT have a `.size` property (`writable.size` evaluates to `undefined`), causing stream corruption. File size MUST be inspected from the `File` object via `getFile()` *before* opening the writable stream.
+
+### 🛠️ 5. Disappearing Toolbar Icon & Security Resets
+* **The Trap:** Relying exclusively on drag-and-drop file events from browser download trays.
+* **The Reality:** Browser toolbar states reset during updates or tab permissions shifts. A hidden click-to-browse file input (`<input type="file">`) fallback is mandatory so users are never stranded if drag-and-drop is interrupted.
+
+### 🛠️ 6. Staging State Key Collisions & Desynchronization
+* **The Trap:** Using string file paths (`displayPath`) as unique keys for staging checkboxes and approval arrays.
+* **The Reality:** If an archive contains multiple files sharing identical display paths, string-based keys cause checkbox desynchronization (checking one toggles all). Staged files MUST be tracked via unique numeric IDs or array index pointers.
+
+---
+
+## 5. Critical Non-Negotiable Architectural Decisions
 
 ### UI Sandboxing via Closed Shadow DOM
-The interface elements *must* be rendered inside a completely isolated, closed Shadow DOM boundary container attached to a host node. 
-*   **Why:** Without a closed Shadow DOM, the CSS styles of the website the developer is currently browsing will bleed into the extension panel, breaking layouts, hiding buttons, and distorting fonts. Isolation guarantees a uniform app environment regardless of the host domain.
+Interface elements *must* be rendered inside a completely isolated, closed Shadow DOM container attached to `#fibo-zip-drop-root`.
+* **Rationale:** Prevents host website CSS from bleeding into the extension sidebar and guarantees uniform styling across all websites.
 
-### Upfront Conflict Resolution Lifecycle
-Files must never be written to the local disk sequentially as they are unzipped. The product must explicitly adhere to a strict two-stage lifecycle:
-1.  **Stage Phase:** Scan the archive $\rightarrow$ read the comment header $\rightarrow$ test the local folder tree for file existence using explicit non-creating read hooks $\rightarrow$ compile a complete memory state matrix.
-2.  **Commit Phase:** Render the state matrix to the user $\rightarrow$ wait for explicit approval indices $\rightarrow$ batch write only verified files to the disk thread.
+### Upfront Two-Stage Conflict Lifecycle
+Files must NEVER be written to disk sequentially during unpacking. Operations MUST follow the two-stage pattern: Stage & Review $\rightarrow$ Explicit User Approval $\rightarrow$ Batch Commit.
