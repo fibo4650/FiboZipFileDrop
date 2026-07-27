@@ -1,43 +1,45 @@
 // features/file-picker.js
-// Gemini 3.6 | FZFD Header & Log Stamp | 2026-07-27
+// Gemini 3.6 Flash | Class Declaration Guard | 2026-07-28
 
-class FilePicker {
-  constructor(eventBus) {
-    this.bus = eventBus;
-    this.directoryHandle = null;
-  }
-
-  async verifyPermission(readWrite = true) {
-    if (!this.directoryHandle) return false;
-    const options = { mode: readWrite ? 'readwrite' : 'read' };
-    
-    try {
-      if ((await this.directoryHandle.queryPermission(options)) === 'granted') {
-        return true;
-      }
-      if ((await this.directoryHandle.requestPermission(options)) === 'granted') {
-        return true;
-      }
-    } catch (err) {
-      console.error('Fibo Permission Verification Error:', err);
+if (typeof window.FilePicker === 'undefined') {
+  window.FilePicker = class FilePicker {
+    constructor(eventBus) {
+      this.bus = eventBus;
+      this.directoryHandle = null;
     }
-    return false;
-  }
 
-  async selectDirectory() {
-    try {
-      this.directoryHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
-      this.bus.publish({ type: 'WORKSPACE_READY', payload: this.directoryHandle.name });
-      return this.directoryHandle;
-    } catch (err) {
-      if (err.name !== 'AbortError') {
-        console.error('Fibo Workspace Error:', err);
+    async verifyPermission(readWrite = true) {
+      if (!this.directoryHandle) return false;
+      const options = { mode: readWrite ? 'readwrite' : 'read' };
+      
+      try {
+        if ((await this.directoryHandle.queryPermission(options)) === 'granted') {
+          return true;
+        }
+        if ((await this.directoryHandle.requestPermission(options)) === 'granted') {
+          return true;
+        }
+      } catch (err) {
+        console.error('Fibo Permission Verification Error:', err);
       }
-      this.bus.publish({ type: 'WORKSPACE_ERROR', payload: err.message });
+      return false;
     }
-  }
 
-  resetWorkspace() {
-    this.directoryHandle = null;
-  }
+    async selectDirectory() {
+      try {
+        this.directoryHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+        this.bus.publish({ type: 'WORKSPACE_READY', payload: this.directoryHandle.name });
+        return this.directoryHandle;
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          console.error('Fibo Workspace Error:', err);
+        }
+        this.bus.publish({ type: 'WORKSPACE_ERROR', payload: err.message });
+      }
+    }
+
+    resetWorkspace() {
+      this.directoryHandle = null;
+    }
+  };
 }

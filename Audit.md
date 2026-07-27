@@ -1,7 +1,5 @@
-
-
 <!-- Audit.md -->
-<!-- Gemini 3.6 | FZFD Header & Log Stamp | 2026-07-27 -->
+<!-- Claude 3.7 Sonnet | FZFD Security & Audit Update | 2026-07-27 -->
 
 # Fibo Zip File Drop: AI Code Audit & Quality Control Specification
 
@@ -22,8 +20,10 @@ This document is the auditing directive and quality control specification for AI
 
 ### 🛡️ Path Parsing & Regex Protection
 * **False-Positive Path Defense:** Header path comments MUST terminate with a valid file extension matching `/\.[a-zA-Z0-9]{1,10}$/` and MUST NOT contain protocol strings (`://`). Prose header lines mentioning filenames (e.g., `# Addendum to Phase3_Blueprint.md — Block 7`) MUST be rejected as explicit paths and fall back to native ZIP relative paths or filenames.
+* **Parent Directory Reference Rejection (`..`):** Header paths or ZIP relative entries containing parent folder references (`..`) MUST be strictly rejected and throw an explicit exception. The File System Access API prohibits `..` in `getDirectoryHandle()` calls and will throw an unhandled `TypeError`.
+* **UTF-8 BOM Removal:** Text input buffers MUST strip leading Byte Order Marks (`/^\uFEFF/`) prior to header regex evaluation to prevent BOM characters from breaking regex start-of-line (`^`) assertions.
 * **Comment Marker Stripping:** Comment delimiters (`//`, `/*`, `*/`, `#`, `<!--`, `-->`) MUST be stripped cleanly from Line 1, Line 2, and Line 3 without corrupting internal slashes.
-* **Path Sanitization:** Illegal OS characters (`:`, `*`, `?`, `"`, `<`, `>`, `|`) MUST be replaced with `_`. Backslashes (`\`) MUST be normalized to forward slashes (`/`).
+* **Path Sanitization:** Illegal OS characters (`:`, `*`, `?`, `"`, `<`, `>`, `|`) MUST be replaced with `_`. Backslashes (`\`) MUST be normalized to forward slashes (`/`), and consecutive slashes MUST be collapsed (`/+/`).
 
 ### 💾 File System Access API & Stream Safety
 * **Writable Stream Seek Rule:** `FileSystemWritableFileStream` objects DO NOT possess a `.size` property. Querying `writable.size` causes stream corruption. File size MUST be inspected from the `File` handle (`(await handle.getFile()).size`) *before* creating a writable stream with `{ keepExistingData: true }`.
@@ -60,4 +60,4 @@ When reviewing code modifications, confirm:
 3. [ ] `writeAutoLog` and `writeEventJson` wrapped in individual `try...catch` blocks to prevent logging failures from halting disk commits.
 4. [ ] Line 2 (`parseLine2Info`) partitions using `indexOf('|')` and `lastIndexOf('|')` to safely preserve chat names containing internal pipes.
 5. [ ] Line 3 (`parseFeatureInfo`) extracts feature IDs using `/^feature:\s*(.+)$/i`.
-
+6. [ ] Paths with `..` references throw explicit errors during staging.
