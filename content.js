@@ -4,6 +4,17 @@
 let fiboPanelInstance = null;
 let isPushedOpen = false;
 
+function escapeHtml(str) {
+  if (typeof str !== 'string') return '';
+  return str.replace(/[&<>"']/g, (m) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[m]));
+}
+
 function bootstrapFibo() {
   if (fiboPanelInstance) return; 
 
@@ -215,7 +226,10 @@ function bootstrapFibo() {
   };
 
   connectBtn.onclick = async () => { await picker.selectDirectory(); };
-  closeBtn.onclick = () => { handleToggle(false); };
+  closeBtn.onclick = () => { 
+    processor.clearState();
+    handleToggle(false); 
+  };
   modeFileBtn.onclick = () => { renderFileModeView(); };
   modeTextBtn.onclick = () => { renderTextModeView(); };
 
@@ -233,12 +247,13 @@ function bootstrapFibo() {
     let listHtml = `<div class="fibo-file-list">`;
     files.forEach((file) => {
       const isRootDefault = file.parts.length === 0;
+      const escapedPath = escapeHtml(file.displayPath);
       listHtml += `
         <div class="fibo-file-item">
-          <span class="fibo-file-info" title="${file.displayPath}">${file.displayPath}</span>
+          <span class="fibo-file-info" title="${escapedPath}">${escapedPath}</span>
           ${isRootDefault ? `<span class="fibo-badge-root">main</span>` : ''}
           ${file.exists 
-            ? `<input type="checkbox" class="fibo-replace-check" data-path="${encodeURIComponent(file.displayPath)}" title="File exists. Check to confirm overwrite." />`
+            ? `<input type="checkbox" class="fibo-replace-check" data-index="${file.index}" title="File exists. Check to confirm overwrite." />`
             : `<span class="fibo-badge-new">new</span>`
           }
         </div>
@@ -261,22 +276,22 @@ function bootstrapFibo() {
 
     dynamicContentZone.querySelector('#sendBtn').onclick = async () => {
       const checkedBoxes = dynamicContentZone.querySelectorAll('.fibo-replace-check');
-      const approvedPaths = [];
+      const approvedIndices = [];
 
       files.forEach((file) => {
-        if (!file.exists) approvedPaths.push(file.displayPath);
+        if (!file.exists) approvedIndices.push(file.index);
       });
 
       checkedBoxes.forEach(box => {
         if (box.checked) {
-          approvedPaths.push(decodeURIComponent(box.getAttribute('data-path')));
+          approvedIndices.push(Number(box.getAttribute('data-index')));
         }
       });
 
       dynamicContentZone.innerHTML = `<div class="fibo-status">⚡ Writing files to disk...</div>`;
       
       const enableLogging = autoLogToggle.checked;
-      await processor.commitUpload(approvedPaths, picker.directoryHandle, enableLogging);
+      await processor.commitUpload(approvedIndices, picker.directoryHandle, enableLogging);
     };
   });
 
@@ -311,9 +326,11 @@ function bootstrapFibo() {
     let logHtml = `<div class="fibo-log-box">`;
     logs.forEach(log => {
       const isOk = log.status === 'SUCCESS';
+      const safePath = escapeHtml(log.path);
+      const safeErr = log.error ? ` (${escapeHtml(log.error)})` : '';
       logHtml += `
         <div class="${isOk ? 'fibo-log-success' : 'fibo-log-fail'}">
-          ${isOk ? '✓' : '✗'} ${log.path} ${log.error ? `(${log.error})` : ''}
+          ${isOk ? '✓' : '✗'} ${safePath}${safeErr}
         </div>
       `;
     });
@@ -339,7 +356,8 @@ function bootstrapFibo() {
 
   bus.subscribe('PROCESS_ERROR', (e) => {
     resetToDefaultView();
-    statusText.innerHTML = `<span style='color: #f38ba8;'>🚨 Error: ${e.payload}</span>`;
+    const safeError = escapeHtml(e.payload);
+    statusText.innerHTML = `<span style='color: #f38ba8;'>🚨 Error: ${safeError}</span>`;
   });
 
   bus.subscribe('WORKSPACE_ERROR', () => { statusText.innerText = `⚠️ Connection Aborted`; });

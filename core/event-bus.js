@@ -10,7 +10,12 @@ class EventBus {
   }
 
   publish(event) {
-    const secureEvent = Object.freeze(structuredClone(event));
+    let secureEvent;
+    try {
+      secureEvent = Object.freeze(structuredClone(event));
+    } catch (e) {
+      secureEvent = Object.freeze({ ...event });
+    }
     (this.listeners.get(secureEvent.type) || []).forEach(handler => {
       try { 
         handler(secureEvent); 

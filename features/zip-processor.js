@@ -6,7 +6,7 @@ class ZipProcessor {
     this.bus = eventBus;
     this.stagedFiles = [];
     this.BINARY_EXTENSIONS = new Set([
-      'png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'svg',
+      'png', 'jpg', 'jpeg', 'gif', 'webp', 'ico',
       'woff', 'woff2', 'ttf', 'otf', 'eot',
       'pdf', 'zip', 'tar', 'gz', 'mp3', 'mp4', 'wav', 'exe'
     ]);
@@ -100,11 +100,24 @@ class ZipProcessor {
           firstLine = content.split('\n')[0] || '';
         }
 
-        const { fileName, displayPath, parts } = this.parseTargetInfo(isBin ? null : firstLine, rawFileName);
+        let { fileName, displayPath, parts, hasExplicitComment } = this.parseTargetInfo(isBin ? null : firstLine, rawFileName);
+
+        if (!hasExplicitComment) {
+          const normalizedPath = relativePath.replace(/\\/g, '/').replace(/^\/+/, '');
+          const pathParts = normalizedPath.split('/').filter(p => p && p !== '.');
+          if (pathParts.length > 0) {
+            fileName = pathParts.pop();
+            parts = pathParts;
+            displayPath = normalizedPath;
+          }
+        }
+
         let fileExists = await this.checkFileExists(rootHandle, parts, fileName);
+        const fileIndex = this.stagedFiles.length;
 
         this.stagedFiles.push({
-          id: displayPath,
+          index: fileIndex,
+          id: `${fileIndex}_${displayPath}`,
           fileName,
           displayPath,
           parts,
@@ -145,9 +158,11 @@ class ZipProcessor {
 
       const { fileName, displayPath, parts } = this.parseTargetInfo(isBin ? null : firstLine, file.name);
       let fileExists = await this.checkFileExists(rootHandle, parts, fileName);
+      const fileIndex = this.stagedFiles.length;
 
       this.stagedFiles.push({
-        id: displayPath,
+        index: fileIndex,
+        id: `${fileIndex}_${displayPath}`,
         fileName,
         displayPath,
         parts,
@@ -193,9 +208,11 @@ class ZipProcessor {
       }
 
       let fileExists = await this.checkFileExists(rootHandle, parts, fileName);
+      const fileIndex = this.stagedFiles.length;
 
       this.stagedFiles.push({
-        id: displayPath,
+        index: fileIndex,
+        id: `${fileIndex}_${displayPath}`,
         fileName,
         displayPath,
         parts,
@@ -225,15 +242,15 @@ class ZipProcessor {
     }
   }
 
-  async commitUpload(approvedPaths, rootHandle, enableLogging = true) {
+  async commitUpload(approvedIndices, rootHandle, enableLogging = true) {
     const logs = [];
     let successCount = 0;
     let failCount = 0;
     let firstCopiedSecondLine = null;
 
     try {
-      const approvedSet = new Set(approvedPaths);
-      const targets = this.stagedFiles.filter(f => approvedSet.has(f.displayPath));
+      const approvedSet = new Set((approvedIndices || []).map(idx => Number(idx)));
+      const targets = this.stagedFiles.filter(f => approvedSet.has(f.index));
 
       for (let i = 0; i < targets.length; i++) {
         const fileData = targets[i];
