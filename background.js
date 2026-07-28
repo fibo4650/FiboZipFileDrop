@@ -1,5 +1,5 @@
 // background.js
-// Gemini 3.6 Flash | Panel Display Fixes | 2026-07-27
+// Claude Sonnet 5 | session 3 refactor | 2026-07-28
 
 chrome.action.onClicked.addListener(async (tab) => {
   if (!tab || !tab.id || !tab.url || tab.url.startsWith("chrome://") || tab.url.startsWith("edge://") || tab.url.startsWith("about:") || tab.url.includes("chromewebstore.google.com") || tab.url.includes("chrome.google.com/webstore")) {
@@ -18,8 +18,20 @@ chrome.action.onClicked.addListener(async (tab) => {
           "vendor/jszip.min.js",
           "core/event-bus.js",
           "features/file-picker.js",
+          "features/zip/header-parser.js",
+          "features/zip/path-resolver.js",
+          "features/zip/collision-detector.js",
+          "features/zip/file-writer.js",
+          "features/zip/log-writer.js",
           "features/zip-processor.js",
           "features/prompt-manager.js",
+          "ui/styles.js",
+          "ui/shadow-dom.js",
+          "ui/toast-manager.js",
+          "ui/clipboard.js",
+          "ui/text-view.js",
+          "ui/prompts-view.js",
+          "ui/staging-view.js",
           "content.js"
         ]
       });

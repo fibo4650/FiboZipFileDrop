@@ -1,223 +1,96 @@
 // features/zip-processor.js
-// Gemini 3.6 Flash | Class Declaration Guard | 2026-07-28
+// Claude Sonnet 5 | session 3 refactor | 2026-07-28
 
 if (typeof window.ZipProcessor === 'undefined') {
   window.ZipProcessor = class ZipProcessor {
     constructor(eventBus) {
       this.bus = eventBus;
       this.stagedFiles = [];
-      this.BINARY_EXTENSIONS = new Set([
-        'png', 'jpg', 'jpeg', 'gif', 'webp', 'ico',
-        'woff', 'woff2', 'ttf', 'otf', 'eot',
-        'pdf', 'zip', 'tar', 'gz', 'mp3', 'mp4', 'wav', 'exe',
-        'dll', 'so', 'dylib', 'class', 'pyc', 'db', 'sqlite'
-      ]);
+
+      this.headerParser = new window.FiboHeaderParser();
+      this.pathResolver = new window.FiboPathResolver();
+      this.collisionDetector = new window.FiboCollisionDetector();
+      this.fileWriter = new window.FiboFileWriter();
+      this.logWriter = new window.FiboLogWriter();
     }
 
+    // -- Back-compat delegates (kept for API stability) --
+
     isBinary(filename) {
-      const ext = filename.split('.').pop().toLowerCase();
-      return this.BINARY_EXTENSIONS.has(ext);
+      return this.pathResolver.isBinary(filename);
     }
 
     parseTargetInfo(firstLine, rawFileName) {
-      let displayPath = rawFileName;
-      let parts = [];
-      let hasExplicitComment = false;
-
-      if (firstLine) {
-        const trimmed = firstLine.replace(/^\uFEFF/, '').trim();
-        const commentRegex = /^(?:\/\/|\/\*|#|<!--)\s*(.*?)(?:\*\/|-->)?$/;
-        const match = trimmed.match(commentRegex);
-
-        if (match) {
-          let candidate = match[1].trim().replace(/(?:\*\/|-->)$/, '').trim();
-          const validExtensionEnd = /\.[a-zA-Z0-9]{1,10}$/;
-
-          if (candidate && !candidate.includes('://') && validExtensionEnd.test(candidate)) {
-            const sanitized = candidate.replace(/[:*?"<>|]/g, '_').replace(/\\/g, '/').replace(/\/+/g, '/');
-            const pathParts = sanitized.split('/').filter(p => p && p !== '.');
-            
-            if (pathParts.includes('..')) {
-              throw new Error(`Forbidden parent directory reference ('..') in path header: '${candidate}'`);
-            }
-
-            if (pathParts.length > 0) {
-              const fileName = pathParts.pop();
-
-              if (validExtensionEnd.test(fileName)) {
-                displayPath = sanitized;
-                parts = pathParts;
-                hasExplicitComment = true;
-                return { fileName, displayPath, parts, hasExplicitComment };
-              }
-            }
-          }
-        }
-      }
-
-      return { fileName: rawFileName, displayPath, parts, hasExplicitComment };
+      return this.pathResolver.parseTargetInfo(firstLine, rawFileName);
     }
 
     isPathHeaderLine(line) {
-      if (typeof line !== 'string') return false;
-      const trimmed = line.replace(/^\uFEFF/, '').trim();
-      const match = trimmed.match(/^(?:\/\/|\/\*|#|<!--)\s*(.*?)(?:\*\/|-->)?$/);
-      if (!match) return false;
-      const inner = match[1].trim().replace(/(?:\*\/|-->)$/, '').trim();
-      const validExtensionEnd = /\.[a-zA-Z0-9]{1,10}$/;
-      if (!inner || inner.includes('://') || !validExtensionEnd.test(inner)) return false;
-      const sanitized = inner.replace(/[:*?"<>|]/g, '_').replace(/\\/g, '/').replace(/\/+/g, '/');
-      const parts = sanitized.split('/').filter(p => p && p !== '.');
-      return !parts.includes('..') && parts.length > 0;
+      return this.headerParser.isPathHeaderLine(line);
     }
 
     isStampHeaderLine(line) {
-      if (typeof line !== 'string') return false;
-      const trimmed = line.replace(/^\uFEFF/, '').trim();
-      const match = trimmed.match(/^(?:\/\/|\/\*|#|<!--)\s*(.*?)(?:\*\/|-->)?$/);
-      if (!match) return false;
-      const inner = match[1].trim().replace(/(?:\*\/|-->)$/, '').trim();
-      const firstPipe = inner.indexOf('|');
-      const lastPipe = inner.lastIndexOf('|');
-      return firstPipe !== -1 && lastPipe !== -1 && firstPipe < lastPipe;
+      return this.headerParser.isStampHeaderLine(line);
     }
 
     isFeatureHeaderLine(line) {
-      if (typeof line !== 'string') return false;
-      const trimmed = line.replace(/^\uFEFF/, '').trim();
-      const match = trimmed.match(/^(?:\/\/|\/\*|#|<!--)\s*(.*?)(?:\*\/|-->)?$/);
-      if (!match) return false;
-      const inner = match[1].trim().replace(/(?:\*\/|-->)$/, '').trim();
-      return /^feature:\s*(.+)$/i.test(inner);
+      return this.headerParser.isFeatureHeaderLine(line);
     }
 
     extractHeaderAndBody(textContent) {
-      if (typeof textContent !== 'string') {
-        return { slots: { line1: null, line2: null, line3: null }, body: '' };
-      }
-
-      const lines = textContent.split('\n');
-      const slots = { line1: null, line2: null, line3: null };
-      let bodyStartIndex = 0;
-
-      if (lines.length > 0 && this.isPathHeaderLine(lines[0])) {
-        slots.line1 = lines[0];
-        bodyStartIndex = 1;
-
-        for (let i = 1; i < Math.min(3, lines.length); i++) {
-          const line = lines[i];
-          if (this.isStampHeaderLine(line)) {
-            if (!slots.line2) {
-              slots.line2 = line;
-              bodyStartIndex = i + 1;
-            } else {
-              break;
-            }
-          } else if (this.isFeatureHeaderLine(line)) {
-            if (!slots.line3) {
-              slots.line3 = line;
-              bodyStartIndex = i + 1;
-            } else {
-              break;
-            }
-          } else {
-            break;
-          }
-        }
-      }
-
-      const body = lines.slice(bodyStartIndex).join('\n');
-      return { slots, body };
+      return this.headerParser.extractHeaderAndBody(textContent);
     }
 
     combineHeaderAndContent(addedText, diskText, mode) {
-      const added = this.extractHeaderAndBody(addedText || '');
-      const disk = this.extractHeaderAndBody(diskText || '');
-
-      const mergedLine1 = added.slots.line1 || disk.slots.line1 || null;
-      const mergedLine2 = added.slots.line2 || disk.slots.line2 || null;
-      const mergedLine3 = added.slots.line3 || disk.slots.line3 || null;
-
-      const mergedHeaders = [];
-      if (mergedLine1) mergedHeaders.push(mergedLine1);
-      if (mergedLine2) mergedHeaders.push(mergedLine2);
-      if (mergedLine3) mergedHeaders.push(mergedLine3);
-
-      const headerBlock = mergedHeaders.length > 0 ? mergedHeaders.join('\n') + '\n' : '';
-      const addedBody = added.body.trim();
-      const diskBody = disk.body.trim();
-
-      let bodies = '';
-      if (mode === 'appended') {
-        bodies = [diskBody, addedBody].filter(Boolean).join('\n\n');
-      } else {
-        bodies = [addedBody, diskBody].filter(Boolean).join('\n\n');
-      }
-
-      return headerBlock + bodies + (bodies ? '\n' : '');
+      return this.headerParser.combineHeaderAndContent(addedText, diskText, mode);
     }
 
     parseLine2Info(line2) {
-      const today = new Date().toISOString().split('T')[0];
-      if (!line2 || typeof line2 !== 'string') {
-        return { model: 'Gemini 3.6', chatName: 'FZFD Session', date: today };
-      }
-      const cleaned = line2.replace(/^(?:\/\/|\/\*|#|<!--)\s*/, '').replace(/(?:\*\/|-->)$/, '').trim();
-      const firstPipe = cleaned.indexOf('|');
-      const lastPipe = cleaned.lastIndexOf('|');
-
-      if (firstPipe !== -1 && lastPipe !== -1 && firstPipe < lastPipe) {
-        const model = cleaned.substring(0, firstPipe).trim() || 'Gemini 3.6';
-        const date = cleaned.substring(lastPipe + 1).trim() || today;
-        const chatName = cleaned.substring(firstPipe + 1, lastPipe).trim() || 'FZFD Session';
-        return { model, chatName, date };
-      }
-
-      return { model: 'Gemini 3.6', chatName: cleaned || 'FZFD Session', date: today };
+      return this.headerParser.parseLine2Info(line2);
     }
 
     parseFeatureInfo(line3) {
-      if (!line3 || typeof line3 !== 'string') return null;
-      const cleaned = line3.replace(/^(?:\/\/|\/\*|#|<!--)\s*/, '').replace(/(?:\*\/|-->)$/, '').trim();
-      const match = cleaned.match(/^feature:\s*(.+)$/i);
-      if (match && match[1].trim()) {
-        return match[1].trim();
-      }
-      return null;
+      return this.headerParser.parseFeatureInfo(line3);
     }
+
+    async checkFileExists(rootHandle, parts, fileName) {
+      return this.collisionDetector.checkFileExists(rootHandle, parts, fileName);
+    }
+
+    async getRotatedLogHandle(logDirHandle, year, month) {
+      return this.logWriter.getRotatedLogHandle(logDirHandle, year, month);
+    }
+
+    async writeAutoLog(rootHandle, logs, successCount, failCount, line2Header, line3Header) {
+      return this.logWriter.writeAutoLog(rootHandle, logs, successCount, failCount, line2Header, line3Header);
+    }
+
+    async writeEventJson(rootHandle, logs, secondLine, thirdLine) {
+      return this.logWriter.writeEventJson(rootHandle, logs, secondLine, thirdLine, this.headerParser);
+    }
+
+    // -- Orchestration --
 
     async updateStagedFile(index, newDisplayPath, newHeaderLines, rootHandle) {
       const staged = this.stagedFiles.find(f => f.index === index);
       if (!staged) return null;
 
-      const sanitized = newDisplayPath.replace(/[:*?"<>|]/g, '_').replace(/\\/g, '/').replace(/\/+/g, '/');
-      const pathParts = sanitized.split('/').filter(p => p && p !== '.');
-      
-      if (pathParts.includes('..')) {
-        throw new Error(`Forbidden parent directory reference ('..') in path: '${newDisplayPath}'`);
-      }
-
-      if (pathParts.length === 0) {
-        throw new Error(`Path cannot be empty.`);
-      }
-
-      const fileName = pathParts.pop();
+      const { fileName, parts, displayPath } = this.pathResolver.resolveExplicitPath(newDisplayPath);
       staged.fileName = fileName;
-      staged.displayPath = sanitized;
-      staged.parts = pathParts;
-      staged.id = `${staged.index}_${sanitized}`;
+      staged.displayPath = displayPath;
+      staged.parts = parts;
+      staged.id = `${staged.index}_${displayPath}`;
 
       if (newHeaderLines && typeof newHeaderLines === 'object' && !staged.isBinary) {
-        const { body } = this.extractHeaderAndBody(staged.content);
+        const { body } = this.headerParser.extractHeaderAndBody(staged.content);
         const newHeaders = [];
-        
-        if (newHeaderLines.line1 && this.isPathHeaderLine(newHeaderLines.line1)) {
+
+        if (newHeaderLines.line1 && this.headerParser.isPathHeaderLine(newHeaderLines.line1)) {
           newHeaders.push(newHeaderLines.line1);
         }
-        if (newHeaderLines.line2 && this.isStampHeaderLine(newHeaderLines.line2)) {
+        if (newHeaderLines.line2 && this.headerParser.isStampHeaderLine(newHeaderLines.line2)) {
           newHeaders.push(newHeaderLines.line2);
         }
-        if (newHeaderLines.line3 && this.isFeatureHeaderLine(newHeaderLines.line3)) {
+        if (newHeaderLines.line3 && this.headerParser.isFeatureHeaderLine(newHeaderLines.line3)) {
           newHeaders.push(newHeaderLines.line3);
         }
 
@@ -226,7 +99,7 @@ if (typeof window.ZipProcessor === 'undefined') {
       }
 
       if (rootHandle) {
-        staged.exists = await this.checkFileExists(rootHandle, staged.parts, staged.fileName);
+        staged.exists = await this.collisionDetector.checkFileExists(rootHandle, staged.parts, staged.fileName);
       }
 
       return staged;
@@ -255,7 +128,7 @@ if (typeof window.ZipProcessor === 'undefined') {
           const rawFileName = relativePath.split('/').pop();
           if (!rawFileName) continue;
 
-          const isBin = this.isBinary(rawFileName);
+          const isBin = this.pathResolver.isBinary(rawFileName);
           let content = null;
           let firstLine = '';
 
@@ -266,24 +139,18 @@ if (typeof window.ZipProcessor === 'undefined') {
             firstLine = content.split('\n')[0] || '';
           }
 
-          let { fileName, displayPath, parts, hasExplicitComment } = this.parseTargetInfo(isBin ? null : firstLine, rawFileName);
+          let { fileName, displayPath, parts, hasExplicitComment } = this.pathResolver.parseTargetInfo(isBin ? null : firstLine, rawFileName);
 
           if (!hasExplicitComment) {
-            const normalizedPath = relativePath.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+/g, '/');
-            const pathParts = normalizedPath.split('/').filter(p => p && p !== '.');
-            
-            if (pathParts.includes('..')) {
-              throw new Error(`ZIP entry contains forbidden parent directory reference ('..'): '${relativePath}'`);
-            }
-
-            if (pathParts.length > 0) {
-              fileName = pathParts.pop();
-              parts = pathParts;
-              displayPath = normalizedPath;
+            const override = this.pathResolver.resolveFallbackPath(relativePath, 'ZIP entry');
+            if (override) {
+              fileName = override.fileName;
+              parts = override.parts;
+              displayPath = override.displayPath;
             }
           }
 
-          let fileExists = await this.checkFileExists(rootHandle, parts, fileName);
+          let fileExists = await this.collisionDetector.checkFileExists(rootHandle, parts, fileName);
           const fileIndex = this.stagedFiles.length;
 
           this.stagedFiles.push({
@@ -317,7 +184,7 @@ if (typeof window.ZipProcessor === 'undefined') {
         this.stagedFiles = [];
 
         for (const file of filesArray) {
-          const isBin = this.isBinary(file.name);
+          const isBin = this.pathResolver.isBinary(file.name);
           let content = null;
           let firstLine = '';
 
@@ -328,24 +195,18 @@ if (typeof window.ZipProcessor === 'undefined') {
             firstLine = content.split('\n')[0] || '';
           }
 
-          let { fileName, displayPath, parts, hasExplicitComment } = this.parseTargetInfo(isBin ? null : firstLine, file.name);
+          let { fileName, displayPath, parts, hasExplicitComment } = this.pathResolver.parseTargetInfo(isBin ? null : firstLine, file.name);
 
           if (!hasExplicitComment && file.webkitRelativePath) {
-            const normalizedPath = file.webkitRelativePath.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+/g, '/');
-            const pathParts = normalizedPath.split('/').filter(p => p && p !== '.');
-
-            if (pathParts.includes('..')) {
-              throw new Error(`File path contains forbidden parent directory reference ('..'): '${file.webkitRelativePath}'`);
-            }
-
-            if (pathParts.length > 0) {
-              fileName = pathParts.pop();
-              parts = pathParts;
-              displayPath = normalizedPath;
+            const override = this.pathResolver.resolveFallbackPath(file.webkitRelativePath, 'File path');
+            if (override) {
+              fileName = override.fileName;
+              parts = override.parts;
+              displayPath = override.displayPath;
             }
           }
 
-          let fileExists = await this.checkFileExists(rootHandle, parts, fileName);
+          let fileExists = await this.collisionDetector.checkFileExists(rootHandle, parts, fileName);
           const fileIndex = this.stagedFiles.length;
 
           this.stagedFiles.push({
@@ -385,18 +246,18 @@ if (typeof window.ZipProcessor === 'undefined') {
         this.stagedFiles = [];
 
         const firstLine = trimmed.split('\n')[0] || '';
-        const { fileName, displayPath, parts, hasExplicitComment } = this.parseTargetInfo(firstLine, 'unnamed.txt');
+        const { fileName, displayPath, parts, hasExplicitComment } = this.pathResolver.parseTargetInfo(firstLine, 'unnamed.txt');
 
         if (!hasExplicitComment) {
           this.clearState();
-          this.bus.publish({ 
-            type: 'PROCESS_ERROR', 
-            payload: 'Raw text requires a valid path comment on line 1 (e.g. // path/file.js or # path/file.md)' 
+          this.bus.publish({
+            type: 'PROCESS_ERROR',
+            payload: 'Raw text requires a valid path comment on line 1 (e.g. // path/file.js or # path/file.md)'
           });
           return;
         }
 
-        let fileExists = await this.checkFileExists(rootHandle, parts, fileName);
+        let fileExists = await this.collisionDetector.checkFileExists(rootHandle, parts, fileName);
         const fileIndex = this.stagedFiles.length;
 
         this.stagedFiles.push({
@@ -415,19 +276,6 @@ if (typeof window.ZipProcessor === 'undefined') {
         this.clearState();
         console.error("Fibo Raw Text Error:", err);
         this.bus.publish({ type: 'PROCESS_ERROR', payload: err.message });
-      }
-    }
-
-    async checkFileExists(rootHandle, parts, fileName) {
-      try {
-        let currentDirHandle = rootHandle;
-        for (const folderName of parts) {
-          currentDirHandle = await currentDirHandle.getDirectoryHandle(folderName, { create: false });
-        }
-        await currentDirHandle.getFileHandle(fileName, { create: false });
-        return true;
-      } catch (e) {
-        return false;
       }
     }
 
@@ -451,7 +299,6 @@ if (typeof window.ZipProcessor === 'undefined') {
 
         for (let i = 0; i < total; i++) {
           const fileData = targets[i];
-          let currentDirHandle = rootHandle;
 
           this.bus.publish({
             type: 'PROCESS_PROGRESS',
@@ -461,18 +308,14 @@ if (typeof window.ZipProcessor === 'undefined') {
           let fileFeature = null;
 
           try {
-            for (const folderName of fileData.parts) {
-              currentDirHandle = await currentDirHandle.getDirectoryHandle(folderName, { create: true });
-            }
-
             const userChangeType = changeTypesMap[fileData.index] || (fileData.exists ? 'updated' : 'new');
+            const result = await this.fileWriter.writeStagedFile(rootHandle, fileData, userChangeType, this.headerParser);
 
-            if (userChangeType === 'deleted') {
-              await currentDirHandle.removeEntry(fileData.fileName);
+            if (result.deleted) {
               successCount++;
-              logs.push({ 
-                path: fileData.displayPath, 
-                status: 'SUCCESS', 
+              logs.push({
+                path: fileData.displayPath,
+                status: 'SUCCESS',
                 error: null,
                 feature: null,
                 changeType: 'deleted'
@@ -480,46 +323,21 @@ if (typeof window.ZipProcessor === 'undefined') {
               continue;
             }
 
-            let finalContent = fileData.content;
-
-            if ((userChangeType === 'appended' || userChangeType === 'prepended') && !fileData.isBinary) {
-              let existingText = '';
-              try {
-                const existingHandle = await currentDirHandle.getFileHandle(fileData.fileName, { create: false });
-                const fileObj = await existingHandle.getFile();
-                existingText = await fileObj.text();
-              } catch (e) {
-                existingText = '';
+            if (result.slots) {
+              if (!firstCopiedSecondLine && result.slots.line2) {
+                firstCopiedSecondLine = result.slots.line2;
               }
 
-              finalContent = this.combineHeaderAndContent(fileData.content, existingText, userChangeType);
-            }
-
-            const fileHandle = await currentDirHandle.getFileHandle(fileData.fileName, { create: true });
-            const writable = await fileHandle.createWritable();
-            try {
-              await writable.write(finalContent);
-            } finally {
-              await writable.close();
-            }
-
-            if (!fileData.isBinary) {
-              const { slots } = this.extractHeaderAndBody(finalContent);
-
-              if (!firstCopiedSecondLine && slots.line2) {
-                firstCopiedSecondLine = slots.line2;
-              }
-              
-              if (slots.line3) {
-                if (!firstCopiedThirdLine) firstCopiedThirdLine = slots.line3;
-                fileFeature = this.parseFeatureInfo(slots.line3);
+              if (result.slots.line3) {
+                if (!firstCopiedThirdLine) firstCopiedThirdLine = result.slots.line3;
+                fileFeature = result.feature;
               }
             }
 
             successCount++;
-            logs.push({ 
-              path: fileData.displayPath, 
-              status: 'SUCCESS', 
+            logs.push({
+              path: fileData.displayPath,
+              status: 'SUCCESS',
               error: null,
               feature: fileFeature,
               changeType: userChangeType
@@ -527,9 +345,9 @@ if (typeof window.ZipProcessor === 'undefined') {
           } catch (fileErr) {
             failCount++;
             const errMsg = fileErr.message || String(fileErr);
-            logs.push({ 
-              path: fileData.displayPath, 
-              status: 'FAILED', 
+            logs.push({
+              path: fileData.displayPath,
+              status: 'FAILED',
               error: errMsg,
               feature: null,
               changeType: 'updated'
@@ -544,11 +362,11 @@ if (typeof window.ZipProcessor === 'undefined') {
 
         if (enableLogging) {
           try {
-            await this.writeAutoLog(
-              rootHandle, 
-              logs, 
-              successCount, 
-              failCount, 
+            await this.logWriter.writeAutoLog(
+              rootHandle,
+              logs,
+              successCount,
+              failCount,
               firstCopiedSecondLine || 'N/A (No Line 2 Present)',
               firstCopiedThirdLine
             );
@@ -559,11 +377,12 @@ if (typeof window.ZipProcessor === 'undefined') {
 
         if (enableEvents) {
           try {
-            await this.writeEventJson(
+            await this.logWriter.writeEventJson(
               rootHandle,
               logs,
               firstCopiedSecondLine,
-              firstCopiedThirdLine
+              firstCopiedThirdLine,
+              this.headerParser
             );
           } catch (eventErr) {
             console.error("FZFD Commit Event-JSON Call-site Error:", eventErr);
@@ -579,103 +398,6 @@ if (typeof window.ZipProcessor === 'undefined') {
         this.clearState();
         console.error("Fibo Commit Error:", err);
         this.bus.publish({ type: 'PROCESS_ERROR', payload: err.message });
-      }
-    }
-
-    async getRotatedLogHandle(logDirHandle, year, month) {
-      const baseName = `fzfd-${year}-${month}`;
-      const MAX_BYTES = 1024 * 1024;
-      let index = 1;
-
-      while (true) {
-        const fileName = index === 1 ? `${baseName}.log` : `${baseName}-part${index}.log`;
-        const logFileHandle = await logDirHandle.getFileHandle(fileName, { create: true });
-        const file = await logFileHandle.getFile();
-
-        if (file.size < MAX_BYTES) {
-          return { logFileHandle, fileSize: file.size };
-        }
-
-        index++;
-      }
-    }
-
-    async writeAutoLog(rootHandle, logs, successCount, failCount, line2Header, line3Header) {
-      try {
-        const logDirHandle = await rootHandle.getDirectoryHandle('FZFDlog', { create: true });
-        
-        const now = new Date();
-        const year = now.getFullYear();
-        const month = String(now.getMonth() + 1).padStart(2, '0');
-
-        const { logFileHandle, fileSize } = await this.getRotatedLogHandle(logDirHandle, year, month);
-
-        const timestamp = now.toISOString();
-        const headerLine1 = `[TIMESTAMP: ${timestamp}] | SUCCESS: ${successCount} | FAILED: ${failCount}`;
-        const headerLine2 = `[STAMP LINE 2]: ${line2Header || 'N/A'}`;
-        const headerLine3 = line3Header ? `[STAMP LINE 3 / FEATURE]: ${line3Header}\n` : '';
-
-        let logBlock = `${headerLine1}\n${headerLine2}\n${headerLine3}`;
-        logs.forEach(l => {
-          logBlock += `  - [${l.status}] ${l.path}${l.error ? ` (Error: ${l.error})` : ''}\n`;
-        });
-        logBlock += `--------------------------------------------------------------------------------\n`;
-
-        const writable = await logFileHandle.createWritable({ keepExistingData: true });
-        try {
-          await writable.seek(fileSize);
-          await writable.write(logBlock);
-        } finally {
-          await writable.close();
-        }
-      } catch (logErr) {
-        console.error("FZFD Auto-Logging Error:", logErr);
-      }
-    }
-
-    async writeEventJson(rootHandle, logs, secondLine, thirdLine) {
-      try {
-        const eventsDirHandle = await rootHandle.getDirectoryHandle('events', { create: true });
-        
-        const now = new Date();
-        const isoTimestamp = now.toISOString();
-        const compactStamp = isoTimestamp.replace(/[:\-.]/g, '');
-        const fileName = `extension-${compactStamp}.json`;
-
-        const line2Info = this.parseLine2Info(secondLine);
-        const globalFeature = this.parseFeatureInfo(thirdLine);
-
-        const filesPayload = logs.map(l => {
-          const featureName = l.feature || globalFeature;
-          const entry = {
-            path: l.path,
-            status: l.status === 'SUCCESS' ? 'success' : 'error',
-            change_type: l.changeType || 'updated'
-          };
-          if (featureName) {
-            entry.expects = { feature: featureName };
-          }
-          return entry;
-        });
-
-        const batchPayload = {
-          timestamp: isoTimestamp,
-          date: line2Info.date,
-          model: line2Info.model,
-          chat_name: line2Info.chatName,
-          source: 'extension',
-          files: filesPayload
-        };
-
-        const eventFileHandle = await eventsDirHandle.getFileHandle(fileName, { create: true });
-        const writable = await eventFileHandle.createWritable();
-        try {
-          await writable.write(JSON.stringify(batchPayload, null, 2));
-        } finally {
-          await writable.close();
-        }
-      } catch (err) {
-        console.error("FZFD Event JSON Write Error:", err);
       }
     }
 
