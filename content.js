@@ -1,5 +1,6 @@
 // content.js
-// Claude Sonnet | Priority 2 & 3 Remediation | 2026-07-28
+// Claude Sonnet 5 | 01-08-new features | 2026-08-02
+// feature: phase2-workspace-switcher
 
 window.fiboPanelInstance = window.fiboPanelInstance || null;
 window.isPushedOpen = window.isPushedOpen || false;
@@ -22,6 +23,7 @@ function bootstrapFibo() {
   const picker = new window.FilePicker(bus);
   const processor = new window.ZipProcessor(bus);
   const promptManager = new window.PromptManager(bus);
+  const workspaceStore = new window.FiboWorkspaceStore();
 
   const { host: uiContainer, shadow } = window.FiboShadowDOM.create();
   window.FiboStyles.inject(shadow);
@@ -34,6 +36,12 @@ function bootstrapFibo() {
       <button class="fibo-close" id="closeBtn">✕</button>
     </div>
     <button class="fibo-btn" id="connectBtn">📁 Connect Local Dir</button>
+    <div style="display: flex; gap: 4px;">
+      <select class="fibo-change-type-select" id="workspaceSelect" style="flex-grow: 1; max-width: none;" title="Recent workspace names (shared across sites — folder access is re-confirmed per site)">
+        <option value="">— Recent Workspaces —</option>
+      </select>
+      <button class="fibo-btn fibo-btn-sm fibo-btn-icon" id="saveWorkspaceBtn" title="Save current folder as a named workspace">💾</button>
+    </div>
     <div class="fibo-status" id="statusText">System Unbound</div>
 
     <div class="fibo-nav">
@@ -69,6 +77,8 @@ function bootstrapFibo() {
   promptManager.init().catch(err => console.error("PromptManager Init Error:", err));
 
   const connectBtn = window.fiboPanelInstance.querySelector('#connectBtn');
+  const workspaceSelect = window.fiboPanelInstance.querySelector('#workspaceSelect');
+  const saveWorkspaceBtn = window.fiboPanelInstance.querySelector('#saveWorkspaceBtn');
   const statusText = window.fiboPanelInstance.querySelector('#statusText');
   const closeBtn = window.fiboPanelInstance.querySelector('#closeBtn');
   const hiddenFileInput = window.fiboPanelInstance.querySelector('#hiddenFileInput');
@@ -187,6 +197,64 @@ function bootstrapFibo() {
     await picker.selectDirectory();
   };
 
+  const refreshWorkspaceSelect = async () => {
+    const names = await workspaceStore.listNames();
+    const options = names.map(n => `<option value="${n.id}">${escapeHtml(n.name)}</option>`).join('');
+    workspaceSelect.innerHTML = `<option value="">— Recent Workspaces —</option>${options}`;
+  };
+  refreshWorkspaceSelect();
+
+  saveWorkspaceBtn.onclick = async () => {
+    if (!picker.directoryHandle) {
+      showToast('⚠️ Connect a folder first');
+      return;
+    }
+    const name = window.prompt('Name this workspace:', picker.directoryHandle.name);
+    if (!name) return;
+
+    const entry = await workspaceStore.saveName(name);
+    await workspaceStore.saveHandleForThisSite(entry.id, picker.directoryHandle);
+    await refreshWorkspaceSelect();
+    showToast('💾 Workspace saved');
+  };
+
+  workspaceSelect.onchange = async () => {
+    const id = workspaceSelect.value;
+    workspaceSelect.value = '';
+    if (!id) return;
+
+    const names = await workspaceStore.listNames();
+    const entry = names.find(n => n.id === id);
+    if (!entry) return;
+
+    let handle = await workspaceStore.getHandleForThisSite(id);
+
+    if (handle) {
+      const hasPerm = await picker.verifyPermission(true, handle);
+      if (!hasPerm) {
+        statusText.innerHTML = "<span style='color: #f38ba8;'>⚠️ Permission denied for this workspace</span>";
+        return;
+      }
+    } else {
+      // First time this name is used on this site — no handle exists here yet,
+      // so ask the user to locate it again. Names are shared across sites; real
+      // folder access never can be (the browser ties it to this page's origin).
+      statusText.innerText = `Locate "${entry.name}" for this site…`;
+      try {
+        handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      } catch (err) {
+        if (err.name !== 'AbortError') console.error('Fibo Workspace Link Error:', err);
+        statusText.innerText = picker.directoryHandle ? `Folder: ${picker.directoryHandle.name}` : 'System Unbound';
+        return;
+      }
+      await workspaceStore.saveHandleForThisSite(id, handle);
+    }
+
+    picker.directoryHandle = handle;
+    await workspaceStore.touchName(id);
+    bus.publish({ type: 'WORKSPACE_READY', payload: handle.name });
+  };
+
   closeBtn.onclick = () => {
     processor.clearState();
     handleToggle(false);
@@ -202,6 +270,12 @@ function bootstrapFibo() {
       hiddenFileInput.value = "";
     }
   };
+
+  bus.subscribe('PROMPTS_UPDATED', () => {
+    if (currentMode === 'PROMPTS' && !promptsView.isEditing()) {
+      promptsView.render();
+    }
+  });
 
   bus.subscribe('ZIP_STAGED', (e) => {
     const files = e.payload;

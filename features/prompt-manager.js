@@ -1,5 +1,6 @@
 // features/prompt-manager.js
-// Claude Sonnet | Priority 2 & 3 Remediation | 2026-07-28
+// Claude Sonnet 5 | 01-08-new features | 2026-08-02
+// feature: phase4-prompt-import-export
 
 if (typeof window.FiboPromptManager === 'undefined') {
   window.FiboPromptManager = class FiboPromptManager {
@@ -21,6 +22,7 @@ if (typeof window.FiboPromptManager === 'undefined') {
               this.save().then(() => resolve(this.prompts));
             }
           });
+          this.bindStorageSync();
         } else {
           const local = localStorage.getItem(this.STORAGE_KEY);
           if (local) {
@@ -35,6 +37,37 @@ if (typeof window.FiboPromptManager === 'undefined') {
             this.prompts = this.getDefaultPrompts();
             this.save().then(() => resolve(this.prompts));
           }
+          this.bindWindowStorageSync();
+        }
+      });
+    }
+
+    // chrome.storage.onChanged fires in every context running this content script,
+    // including the tab that made the write itself — the equality check is what
+    // tells a real cross-tab change apart from an echo of our own save().
+    bindStorageSync() {
+      if (!chrome.storage.onChanged) return;
+      chrome.storage.onChanged.addListener((changes, areaName) => {
+        if (areaName !== 'local' || !changes[this.STORAGE_KEY]) return;
+        const incoming = changes[this.STORAGE_KEY].newValue || [];
+        if (JSON.stringify(incoming) === JSON.stringify(this.prompts)) return;
+        this.prompts = incoming;
+        if (this.bus) this.bus.publish({ type: 'PROMPTS_UPDATED', payload: this.prompts });
+      });
+    }
+
+    // Fallback for non-extension/localStorage contexts. The 'storage' event only
+    // ever fires on OTHER tabs/windows of the same origin, never the writer itself,
+    // so no echo-suppression is needed here.
+    bindWindowStorageSync() {
+      if (typeof window === 'undefined' || !window.addEventListener) return;
+      window.addEventListener('storage', (e) => {
+        if (e.key !== this.STORAGE_KEY || !e.newValue) return;
+        try {
+          this.prompts = JSON.parse(e.newValue);
+          if (this.bus) this.bus.publish({ type: 'PROMPTS_UPDATED', payload: this.prompts });
+        } catch (err) {
+          console.error('Fibo Prompt Sync Parse Error:', err);
         }
       });
     }
@@ -173,13 +206,100 @@ if (typeof window.FiboPromptManager === 'undefined') {
       }
     }
 
+    // Returns the resolved text, or null if the user cancelled a required
+    // {{feature}} prompt — callers must treat null as "abort the copy," not as
+    // an empty string, so a cancelled fill-in never silently copies partial text.
     getComputedText(prompt, variant = null) {
-      if (!variant) return prompt.content;
-      if (variant.type === 'edit') return variant.content;
-      if (variant.type === 'append') {
-        return `${prompt.content}\n\n${variant.addition || ''}`;
+      let raw = prompt.content;
+      if (variant) {
+        if (variant.type === 'edit') raw = variant.content;
+        else if (variant.type === 'append') raw = `${prompt.content}\n\n${variant.addition || ''}`;
       }
-      return prompt.content;
+      return this.resolvePlaceholders(raw);
+    }
+
+    resolvePlaceholders(text) {
+      if (typeof text !== 'string' || text.indexOf('{{') === -1) return text;
+
+      const now = new Date();
+      const pad = (n) => String(n).padStart(2, '0');
+      const dateStr = now.toISOString().split('T')[0];
+      const timeStr = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+
+      let result = text.split('{{date}}').join(dateStr).split('{{time}}').join(timeStr);
+
+      if (result.includes('{{feature}}')) {
+        const featureValue = window.prompt('Fill in {{feature}}:', '');
+        if (featureValue === null) return null;
+        result = result.split('{{feature}}').join(featureValue);
+      }
+
+      return result;
+    }
+
+    exportPromptsJson() {
+      return JSON.stringify(this.prompts, null, 2);
+    }
+
+    validateImportedPrompts(parsed) {
+      if (!Array.isArray(parsed)) {
+        throw new Error('Import file must contain a JSON array of prompts.');
+      }
+      parsed.forEach((p, i) => {
+        if (!p || typeof p.id !== 'string' || typeof p.name !== 'string' || typeof p.content !== 'string') {
+          throw new Error(`Prompt at index ${i} is missing required fields (id, name, content).`);
+        }
+      });
+    }
+
+    // conflictResolver(existingPrompt, incomingPrompt) is called once per ID
+    // collision with different content, and must resolve to 'skip' | 'overwrite'
+    // | 'skip-all' | 'overwrite-all'. Once a '*-all' choice is made it's reused
+    // for every remaining conflict without asking again.
+    async importPromptsJson(jsonStr, conflictResolver) {
+      let parsed;
+      try {
+        parsed = JSON.parse(jsonStr);
+      } catch (e) {
+        throw new Error('Import file is not valid JSON.');
+      }
+      this.validateImportedPrompts(parsed);
+
+      let bulkDecision = null;
+      let imported = 0, overwritten = 0, skipped = 0;
+
+      for (const incoming of parsed) {
+        const existingIndex = this.prompts.findIndex((p) => p.id === incoming.id);
+
+        if (existingIndex === -1) {
+          this.prompts.push(incoming);
+          imported++;
+          continue;
+        }
+
+        const existing = this.prompts[existingIndex];
+        if (JSON.stringify(existing) === JSON.stringify(incoming)) {
+          continue;
+        }
+
+        let decision = bulkDecision;
+        if (!decision) {
+          decision = conflictResolver ? await conflictResolver(existing, incoming) : 'skip';
+          if (decision === 'skip-all' || decision === 'overwrite-all') bulkDecision = decision;
+        }
+
+        const effective = decision === 'overwrite-all' ? 'overwrite' : decision === 'skip-all' ? 'skip' : decision;
+
+        if (effective === 'overwrite') {
+          this.prompts[existingIndex] = incoming;
+          overwritten++;
+        } else {
+          skipped++;
+        }
+      }
+
+      await this.save();
+      return { imported, overwritten, skipped };
     }
   };
 }

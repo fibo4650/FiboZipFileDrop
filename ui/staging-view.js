@@ -1,5 +1,6 @@
 // ui/staging-view.js
-// Claude Sonnet | Priority 2 & 3 Remediation | 2026-07-28
+// Claude Sonnet 5 | 01-08-new features | 2026-08-02
+// feature: phase1-multiblock
 
 if (typeof window.FiboStagingView === 'undefined') {
   window.FiboStagingView = class FiboStagingView {
@@ -15,7 +16,10 @@ if (typeof window.FiboStagingView === 'undefined') {
     }
 
     show(files) {
-      this.activeInlineEditIndex = null;
+      // Auto-open the first block still missing a path so the user notices it
+      // immediately instead of having to spot a badge buried in a long list.
+      const firstNeedsPath = files.find(f => f.needsPath);
+      this.activeInlineEditIndex = firstNeedsPath ? firstNeedsPath.index : null;
       this.render(files);
     }
 
@@ -120,6 +124,7 @@ if (typeof window.FiboStagingView === 'undefined') {
           <div class="fibo-file-item" data-path="${escapedPath.toLowerCase()}">
             <div class="fibo-file-header-row">
               <span class="fibo-file-info" data-action="toggle-edit" data-index="${file.index}" title="Click to edit relative path & headers">${escapedPath}</span>
+              ${file.needsPath ? `<span class="fibo-badge-danger">needs path</span>` : ''}
               ${isRootDefault ? `<span class="fibo-badge-root">main</span>` : ''}
 
               <select class="fibo-change-type-select" data-index="${file.index}" title="Select change_type for commit">
@@ -140,7 +145,7 @@ if (typeof window.FiboStagingView === 'undefined') {
             ${isEditingThis ? `
               <div class="fibo-inline-edit-panel">
                 <span class="fibo-hint" style="font-weight: bold; color: #89b4fa;">Edit Path & Line Headers:</span>
-                <input type="text" class="fibo-input" id="editPath_${file.index}" placeholder="Relative Path" value="${escapedPath}" />
+                <input type="text" class="fibo-input" id="editPath_${file.index}" placeholder="Relative Path (e.g. src/utils/helpers.js)" value="${file.needsPath ? '' : escapedPath}" />
                 ${!file.isBinary ? `
                   <input type="text" class="fibo-input" id="editLine1_${file.index}" placeholder="Line 1 Path Comment (e.g. // path/file.js)" value="${this.escapeHtml(line1)}" />
                   <input type="text" class="fibo-input" id="editLine2_${file.index}" placeholder="Line 2 Session Stamp (e.g. // Model | Chat | Date)" value="${this.escapeHtml(line2)}" />
@@ -282,6 +287,12 @@ if (typeof window.FiboStagingView === 'undefined') {
       };
 
       this.zone.querySelector('#sendBtn').onclick = async () => {
+        const pendingCount = files.filter(f => f.needsPath).length;
+        if (pendingCount > 0) {
+          this.showToast(`⚠️ Assign a path to ${pendingCount} block(s) before sending`);
+          return;
+        }
+
         const checkedBoxes = this.zone.querySelectorAll('.fibo-replace-check');
         const changeTypeSelects = this.zone.querySelectorAll('.fibo-change-type-select');
         const approvedIndices = new Set();

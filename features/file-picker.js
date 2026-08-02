@@ -1,5 +1,6 @@
 // features/file-picker.js
-// Claude Sonnet | Priority 2 & 3 Remediation | 2026-07-28
+// Claude Sonnet 5 | 01-08-new features | 2026-08-02
+// feature: phase2-workspace-switcher
 
 if (typeof window.FiboFilePicker === 'undefined') {
   window.FiboFilePicker = class FiboFilePicker {
@@ -8,15 +9,18 @@ if (typeof window.FiboFilePicker === 'undefined') {
       this.directoryHandle = null;
     }
 
-    async verifyPermission(readWrite = true) {
-      if (!this.directoryHandle) return false;
+    // `handle` defaults to the currently-connected directory but can be passed
+    // explicitly to re-verify a workspace handle rehydrated from IndexedDB,
+    // which needs the exact same query/request flow before it can be reused.
+    async verifyPermission(readWrite = true, handle = this.directoryHandle) {
+      if (!handle) return false;
       const options = { mode: readWrite ? 'readwrite' : 'read' };
-      
+
       try {
-        if ((await this.directoryHandle.queryPermission(options)) === 'granted') {
+        if ((await handle.queryPermission(options)) === 'granted') {
           return true;
         }
-        if ((await this.directoryHandle.requestPermission(options)) === 'granted') {
+        if ((await handle.requestPermission(options)) === 'granted') {
           return true;
         }
       } catch (err) {

@@ -1,5 +1,6 @@
 // features/zip/header-parser.js
-// Claude Sonnet | Priority 2 & 3 Remediation | 2026-07-28
+// Claude Sonnet 5 | 01-08-new features | 2026-08-02
+// feature: phase1-multiblock
 
 if (typeof window.FiboHeaderParser === 'undefined') {
   window.FiboHeaderParser = class FiboHeaderParser {
@@ -129,6 +130,42 @@ if (typeof window.FiboHeaderParser === 'undefined') {
       }
 
       return { model: 'Gemini 3.6', chatName: cleaned || 'FZFD Session', date: today };
+    }
+
+    // Matches fenced code blocks (``` or ~~~, 3+ chars) and requires the closing
+    // fence to reuse the exact same marker the opening used. This is what keeps
+    // an AI response that itself *discusses* code fences — and so contains a
+    // shorter, unescalated ``` example nested inside a longer ```` block — from
+    // truncating extraction early. A naive "match up to the next ```" regex
+    // breaks on exactly that, which is a routine occurrence in real chat replies.
+    extractMarkdownCodeBlocks(rawText) {
+      if (typeof rawText !== 'string') return [];
+
+      const FENCE_RE = /^(`{3,}|~{3,})[^\S\r\n]*([a-zA-Z0-9_-]*)[^\S\r\n]*([^\r\n]*)\r?\n([\s\S]*?)^\1[^\S\r\n]*$/gm;
+      const validExtensionEnd = /\.[a-zA-Z0-9]{1,10}$/;
+      const blocks = [];
+      let match;
+
+      while ((match = FENCE_RE.exec(rawText)) !== null) {
+        const infoRest = (match[3] || '').trim();
+        const body = match[4];
+        const firstBodyLine = body.split('\n')[0] || '';
+
+        let candidatePath = null;
+        let hasExplicitComment = false;
+
+        if (this.isPathHeaderLine(firstBodyLine)) {
+          hasExplicitComment = true;
+        } else if (infoRest && !infoRest.includes('://') && validExtensionEnd.test(infoRest)) {
+          candidatePath = infoRest;
+        }
+
+        blocks.push({ content: body, candidatePath, hasExplicitComment });
+
+        if (match.index === FENCE_RE.lastIndex) FENCE_RE.lastIndex++;
+      }
+
+      return blocks;
     }
 
     parseFeatureInfo(line3) {

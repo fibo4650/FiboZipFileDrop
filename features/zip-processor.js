@@ -1,5 +1,6 @@
 // features/zip-processor.js
-// Claude Sonnet | Priority 2 & 3 Remediation | 2026-07-28
+// Claude Sonnet 5 | 01-08-new features | 2026-08-02
+// feature: phase1-multiblock
 
 if (typeof window.FiboZipProcessor === 'undefined') {
   window.FiboZipProcessor = class FiboZipProcessor {
@@ -12,6 +13,7 @@ if (typeof window.FiboZipProcessor === 'undefined') {
       this.collisionDetector = new window.FiboCollisionDetector();
       this.fileWriter = new window.FiboFileWriter();
       this.logWriter = new window.FiboLogWriter();
+      this.rawTextStager = new window.FiboRawTextStager(this.headerParser, this.pathResolver, this.collisionDetector);
     }
 
     // extractHeaderAndBody is the one delegate the UI layer calls directly
@@ -31,6 +33,7 @@ if (typeof window.FiboZipProcessor === 'undefined') {
       staged.displayPath = displayPath;
       staged.parts = parts;
       staged.id = `${staged.index}_${displayPath}`;
+      staged.needsPath = false;
 
       if (newHeaderLines && typeof newHeaderLines === 'object' && !staged.isBinary) {
         const { body } = this.headerParser.extractHeaderAndBody(staged.content);
@@ -181,48 +184,15 @@ if (typeof window.FiboZipProcessor === 'undefined') {
       }
     }
 
-    async stageRawText(rawText, rootHandle) {
+    async stageRawText(rawText, rootHandle, fallbackPath = '') {
       if (!rootHandle) {
         this.bus.publish({ type: 'PROCESS_ERROR', payload: 'Please attach a target folder first!' });
         return;
       }
 
-      const trimmed = rawText.trim();
-      if (!trimmed) {
-        this.bus.publish({ type: 'PROCESS_ERROR', payload: 'Raw text buffer is empty!' });
-        return;
-      }
-
       try {
         this.bus.publish({ type: 'PROCESS_START', payload: 'Raw Text Input' });
-        this.stagedFiles = [];
-
-        const firstLine = trimmed.split('\n')[0] || '';
-        const { fileName, displayPath, parts, hasExplicitComment } = this.pathResolver.parseTargetInfo(firstLine, 'unnamed.txt');
-
-        if (!hasExplicitComment) {
-          this.clearState();
-          this.bus.publish({
-            type: 'PROCESS_ERROR',
-            payload: 'Raw text requires a valid path comment on line 1 (e.g. // path/file.js or # path/file.md)'
-          });
-          return;
-        }
-
-        let fileExists = await this.collisionDetector.checkFileExists(rootHandle, parts, fileName);
-        const fileIndex = this.stagedFiles.length;
-
-        this.stagedFiles.push({
-          index: fileIndex,
-          id: `${fileIndex}_${displayPath}`,
-          fileName,
-          displayPath,
-          parts,
-          content: rawText,
-          isBinary: false,
-          exists: fileExists
-        });
-
+        this.stagedFiles = await this.rawTextStager.stageRawText(rawText, fallbackPath, rootHandle);
         this.bus.publish({ type: 'ZIP_STAGED', payload: this.stagedFiles });
       } catch (err) {
         this.clearState();

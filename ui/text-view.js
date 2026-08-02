@@ -1,5 +1,6 @@
 // ui/text-view.js
-// Claude Sonnet 5 | session 2 refactor | 2026-07-28
+// Claude Sonnet 5 | 01-08-new features | 2026-08-02
+// feature: phase1-multiblock
 
 if (typeof window.FiboTextView === 'undefined') {
   window.FiboTextView = class FiboTextView {
@@ -12,14 +13,16 @@ if (typeof window.FiboTextView === 'undefined') {
 
     render() {
       this.zone.innerHTML = `
+        <input type="text" class="fibo-input" id="rawTextPathInput" placeholder="Optional Fallback Path (e.g. src/utils/helpers.js) — only used for a single snippet with no header" />
         <textarea class="fibo-textarea" id="rawTextArea" placeholder="// path/to/file.js&#10;// Gemini 3.6 | FZFD Header & Log Stamp | 2026-07-27&#10;// feature: phase4-grimoire-dragon-astral&#10;console.log('Paste code here...');"></textarea>
         <button class="fibo-btn" id="stageTextBtn" style="background: #cba6f7;">⚡ Analyze Raw Text</button>
       `;
 
       this.zone.querySelector('#stageTextBtn').onclick = async () => {
         const text = this.zone.querySelector('#rawTextArea').value;
+        const fallbackPath = this.zone.querySelector('#rawTextPathInput').value;
         if (!await this.checkWorkspacePermission()) return;
-        await this.processor.stageRawText(text, this.picker.directoryHandle);
+        await this.processor.stageRawText(text, this.picker.directoryHandle, fallbackPath);
       };
     }
   };

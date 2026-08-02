@@ -1,5 +1,6 @@
 // ui/styles.js
-// Claude Sonnet 5 | session 1 refactor | 2026-07-28
+// Claude Sonnet 5 | 01-08-new features | 2026-08-02
+// feature: phase1-multiblock
 
 if (typeof window.FiboStyles === 'undefined') {
   window.FiboStyles = {
@@ -108,6 +109,10 @@ if (typeof window.FiboStyles === 'undefined') {
     .fibo-badge-tag {
       background: #cba6f7; color: #11111b; font-size: 9px; font-weight: bold;
       padding: 1px 4px; border-radius: 3px; text-transform: uppercase; flex-shrink: 0;
+    }
+    .fibo-badge-danger {
+      background: #f38ba8; color: #11111b; font-size: 9px;
+      font-weight: bold; padding: 2px 5px; border-radius: 4px; text-transform: uppercase; flex-shrink: 0;
     }
 
     .fibo-prompt-list {
