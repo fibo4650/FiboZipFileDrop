@@ -1,8 +1,8 @@
 // features/prompt-manager.js
-// Gemini 3.6 Flash | Class Declaration Guard | 2026-07-28
+// Claude Sonnet | Priority 2 & 3 Remediation | 2026-07-28
 
-if (typeof window.PromptManager === 'undefined') {
-  window.PromptManager = class PromptManager {
+if (typeof window.FiboPromptManager === 'undefined') {
+  window.FiboPromptManager = class FiboPromptManager {
     constructor(eventBus) {
       this.bus = eventBus;
       this.prompts = [];
@@ -15,23 +15,26 @@ if (typeof window.PromptManager === 'undefined') {
           chrome.storage.local.get([this.STORAGE_KEY], (result) => {
             if (result && result[this.STORAGE_KEY]) {
               this.prompts = result[this.STORAGE_KEY];
+              resolve(this.prompts);
             } else {
               this.prompts = this.getDefaultPrompts();
+              this.save().then(() => resolve(this.prompts));
             }
-            resolve(this.prompts);
           });
         } else {
           const local = localStorage.getItem(this.STORAGE_KEY);
           if (local) {
             try {
               this.prompts = JSON.parse(local);
+              resolve(this.prompts);
             } catch (e) {
               this.prompts = this.getDefaultPrompts();
+              this.save().then(() => resolve(this.prompts));
             }
           } else {
             this.prompts = this.getDefaultPrompts();
+            this.save().then(() => resolve(this.prompts));
           }
-          resolve(this.prompts);
         }
       });
     }
@@ -140,9 +143,13 @@ if (typeof window.PromptManager === 'undefined') {
 
       variant.name = name.trim();
       if (variant.type === 'append') {
-        variant.addition = payload.addition ? payload.addition.trim() : '';
+        if (payload && typeof payload.addition === 'string' && payload.addition.trim()) {
+          variant.addition = payload.addition.trim();
+        }
       } else {
-        variant.content = payload.content ? payload.content.trim() : '';
+        if (payload && typeof payload.content === 'string' && payload.content.trim()) {
+          variant.content = payload.content.trim();
+        }
       }
       await this.save();
     }
@@ -176,3 +183,6 @@ if (typeof window.PromptManager === 'undefined') {
     }
   };
 }
+
+// Legacy alias — preserved for backwards compatibility.
+window.PromptManager = window.FiboPromptManager;

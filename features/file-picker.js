@@ -1,8 +1,8 @@
 // features/file-picker.js
-// Gemini 3.6 Flash | Class Declaration Guard | 2026-07-28
+// Claude Sonnet | Priority 2 & 3 Remediation | 2026-07-28
 
-if (typeof window.FilePicker === 'undefined') {
-  window.FilePicker = class FilePicker {
+if (typeof window.FiboFilePicker === 'undefined') {
+  window.FiboFilePicker = class FiboFilePicker {
     constructor(eventBus) {
       this.bus = eventBus;
       this.directoryHandle = null;
@@ -37,9 +37,8 @@ if (typeof window.FilePicker === 'undefined') {
         this.bus.publish({ type: 'WORKSPACE_ERROR', payload: err.message });
       }
     }
-
-    resetWorkspace() {
-      this.directoryHandle = null;
-    }
   };
 }
+
+// Legacy alias — preserved for backwards compatibility.
+window.FilePicker = window.FiboFilePicker;

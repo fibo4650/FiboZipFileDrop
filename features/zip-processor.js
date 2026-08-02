@@ -1,71 +1,23 @@
 // features/zip-processor.js
-// Claude Sonnet 5 | session 3 refactor | 2026-07-28
+// Claude Sonnet | Priority 2 & 3 Remediation | 2026-07-28
 
-if (typeof window.ZipProcessor === 'undefined') {
-  window.ZipProcessor = class ZipProcessor {
+if (typeof window.FiboZipProcessor === 'undefined') {
+  window.FiboZipProcessor = class FiboZipProcessor {
     constructor(eventBus) {
       this.bus = eventBus;
       this.stagedFiles = [];
 
       this.headerParser = new window.FiboHeaderParser();
-      this.pathResolver = new window.FiboPathResolver();
+      this.pathResolver = new window.FiboPathResolver(this.headerParser);
       this.collisionDetector = new window.FiboCollisionDetector();
       this.fileWriter = new window.FiboFileWriter();
       this.logWriter = new window.FiboLogWriter();
     }
 
-    // -- Back-compat delegates (kept for API stability) --
-
-    isBinary(filename) {
-      return this.pathResolver.isBinary(filename);
-    }
-
-    parseTargetInfo(firstLine, rawFileName) {
-      return this.pathResolver.parseTargetInfo(firstLine, rawFileName);
-    }
-
-    isPathHeaderLine(line) {
-      return this.headerParser.isPathHeaderLine(line);
-    }
-
-    isStampHeaderLine(line) {
-      return this.headerParser.isStampHeaderLine(line);
-    }
-
-    isFeatureHeaderLine(line) {
-      return this.headerParser.isFeatureHeaderLine(line);
-    }
-
+    // extractHeaderAndBody is the one delegate the UI layer calls directly
+    // (ui/staging-view.js uses it to preview line1/line2/line3 while editing).
     extractHeaderAndBody(textContent) {
       return this.headerParser.extractHeaderAndBody(textContent);
-    }
-
-    combineHeaderAndContent(addedText, diskText, mode) {
-      return this.headerParser.combineHeaderAndContent(addedText, diskText, mode);
-    }
-
-    parseLine2Info(line2) {
-      return this.headerParser.parseLine2Info(line2);
-    }
-
-    parseFeatureInfo(line3) {
-      return this.headerParser.parseFeatureInfo(line3);
-    }
-
-    async checkFileExists(rootHandle, parts, fileName) {
-      return this.collisionDetector.checkFileExists(rootHandle, parts, fileName);
-    }
-
-    async getRotatedLogHandle(logDirHandle, year, month) {
-      return this.logWriter.getRotatedLogHandle(logDirHandle, year, month);
-    }
-
-    async writeAutoLog(rootHandle, logs, successCount, failCount, line2Header, line3Header) {
-      return this.logWriter.writeAutoLog(rootHandle, logs, successCount, failCount, line2Header, line3Header);
-    }
-
-    async writeEventJson(rootHandle, logs, secondLine, thirdLine) {
-      return this.logWriter.writeEventJson(rootHandle, logs, secondLine, thirdLine, this.headerParser);
     }
 
     // -- Orchestration --
@@ -406,3 +358,6 @@ if (typeof window.ZipProcessor === 'undefined') {
     }
   };
 }
+
+// Legacy alias — preserved for backwards compatibility.
+window.ZipProcessor = window.FiboZipProcessor;

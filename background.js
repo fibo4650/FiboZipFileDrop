@@ -1,5 +1,5 @@
 // background.js
-// Claude Sonnet 5 | session 3 refactor | 2026-07-28
+// Claude Sonnet 5 | session 4 refactor | 2026-07-28
 
 chrome.action.onClicked.addListener(async (tab) => {
   if (!tab || !tab.id || !tab.url || tab.url.startsWith("chrome://") || tab.url.startsWith("edge://") || tab.url.startsWith("about:") || tab.url.includes("chromewebstore.google.com") || tab.url.includes("chrome.google.com/webstore")) {
@@ -29,6 +29,7 @@ chrome.action.onClicked.addListener(async (tab) => {
           "ui/shadow-dom.js",
           "ui/toast-manager.js",
           "ui/clipboard.js",
+          "ui/file-view.js",
           "ui/text-view.js",
           "ui/prompts-view.js",
           "ui/staging-view.js",

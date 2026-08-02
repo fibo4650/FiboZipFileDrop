@@ -6,3 +6,4 @@ build/
 venv/
 .DS_Store
 repomix-output.md
+repomix-output-prerefactor.md

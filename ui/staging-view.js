@@ -1,17 +1,16 @@
 // ui/staging-view.js
-// Claude Sonnet 5 | session 2 refactor | 2026-07-28
+// Claude Sonnet | Priority 2 & 3 Remediation | 2026-07-28
 
 if (typeof window.FiboStagingView === 'undefined') {
   window.FiboStagingView = class FiboStagingView {
-    constructor({ processor, picker, dynamicContentZone, escapeHtml, showToast, autoLogToggle, emitEventsToggle, onCancel }) {
+    constructor({ processor, dynamicContentZone, escapeHtml, showToast, onCancel, onUpdateStagedFile, onCommitUpload }) {
       this.processor = processor;
-      this.picker = picker;
       this.zone = dynamicContentZone;
       this.escapeHtml = escapeHtml;
       this.showToast = showToast;
-      this.autoLogToggle = autoLogToggle;
-      this.emitEventsToggle = emitEventsToggle;
       this.onCancel = onCancel;
+      this.onUpdateStagedFile = onUpdateStagedFile;
+      this.onCommitUpload = onCommitUpload;
       this.activeInlineEditIndex = null;
     }
 
@@ -47,6 +46,45 @@ if (typeof window.FiboStagingView === 'undefined') {
         progressFill.style.width = `${pct}%`;
         writeProgressText.innerText = `⚡ Writing files: ${current} / ${total} (${pct}%)`;
       }
+    }
+
+    renderExecutionLog(logs) {
+      let logHtml = `<div class="fibo-log-box">`;
+      logs.forEach(log => {
+        const isOk = log.status === 'SUCCESS';
+        const safePath = this.escapeHtml(log.path);
+        const safeErr = log.error ? ` (${this.escapeHtml(log.error)})` : '';
+        const safeType = this.escapeHtml(log.changeType || 'updated');
+        logHtml += `
+          <div class="${isOk ? 'fibo-log-success' : 'fibo-log-fail'}">
+            ${isOk ? '✓' : '✗'} [${safeType}] ${safePath}${safeErr}
+          </div>
+        `;
+      });
+      logHtml += `</div>`;
+      logHtml += `<button class="fibo-btn" id="downloadLogBtn" style="background: #89b4fa;">📥 Download Execution Log</button>`;
+
+      const logContainer = document.createElement('div');
+      logContainer.style.cssText = "display: flex; flex-direction: column; gap: 8px;";
+      logContainer.innerHTML = logHtml;
+
+      // Clear whatever default-mode view is currently in the zone (e.g. the
+      // dropzone) before appending the log, so it doesn't linger alongside it.
+      this.zone.innerHTML = '';
+      this.zone.appendChild(logContainer);
+
+      logContainer.querySelector('#downloadLogBtn').onclick = () => {
+        const logText = logs.map(l => `[${l.status}] [${l.changeType || 'updated'}] ${l.path}${l.error ? ` - Error: ${l.error}` : ''}`).join('\n');
+        const blob = new Blob([logText], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `fibo-upload-log-${Date.now()}.txt`;
+        logContainer.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      };
     }
 
     render(files, preservedState = null) {
@@ -128,6 +166,35 @@ if (typeof window.FiboStagingView === 'undefined') {
       this.zone.innerHTML = listHtml;
 
       const masterToggle = this.zone.querySelector('#masterToggle');
+
+      const updateMasterToggleState = () => {
+        if (!masterToggle) return;
+
+        const visibleChecks = Array.from(this.zone.querySelectorAll('.fibo-replace-check')).filter(chk => {
+          const row = chk.closest('.fibo-file-item');
+          return row && row.style.display !== 'none';
+        });
+
+        if (visibleChecks.length === 0) {
+          masterToggle.checked = false;
+          masterToggle.indeterminate = false;
+          return;
+        }
+
+        const checkedCount = visibleChecks.filter(chk => chk.checked).length;
+
+        if (checkedCount === visibleChecks.length) {
+          masterToggle.checked = true;
+          masterToggle.indeterminate = false;
+        } else if (checkedCount > 0) {
+          masterToggle.checked = false;
+          masterToggle.indeterminate = true;
+        } else {
+          masterToggle.checked = false;
+          masterToggle.indeterminate = false;
+        }
+      };
+
       if (masterToggle) {
         masterToggle.onchange = (evt) => {
           const visibleChecks = this.zone.querySelectorAll('.fibo-replace-check');
@@ -137,8 +204,13 @@ if (typeof window.FiboStagingView === 'undefined') {
               chk.checked = evt.target.checked;
             }
           });
+          updateMasterToggleState();
         };
       }
+
+      this.zone.querySelectorAll('.fibo-replace-check').forEach(chk => {
+        chk.onchange = updateMasterToggleState;
+      });
 
       const stagingSearch = this.zone.querySelector('#stagingSearch');
       const filterRows = () => {
@@ -152,9 +224,12 @@ if (typeof window.FiboStagingView === 'undefined') {
             item.style.display = 'none';
           }
         });
+        updateMasterToggleState();
       };
       stagingSearch.oninput = filterRows;
       if (previousState.searchQuery) filterRows();
+
+      updateMasterToggleState();
 
       this.zone.querySelectorAll('[data-action="toggle-edit"]').forEach(btn => {
         btn.onclick = () => {
@@ -191,7 +266,7 @@ if (typeof window.FiboStagingView === 'undefined') {
             } : null;
 
             try {
-              await this.processor.updateStagedFile(idx, newPath, headerLines, this.picker.directoryHandle);
+              await this.onUpdateStagedFile(idx, newPath, headerLines);
               this.activeInlineEditIndex = null;
               this.render(this.processor.stagedFiles, currentState);
             } catch (err) {
@@ -237,9 +312,7 @@ if (typeof window.FiboStagingView === 'undefined') {
           </div>
         `;
 
-        const enableLogging = this.autoLogToggle.checked;
-        const enableEvents = this.emitEventsToggle.checked;
-        await this.processor.commitUpload(Array.from(approvedIndices), this.picker.directoryHandle, enableLogging, enableEvents, changeTypesMap);
+        await this.onCommitUpload(Array.from(approvedIndices), changeTypesMap);
       };
     }
   };

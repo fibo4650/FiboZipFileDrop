@@ -1,8 +1,8 @@
 // core/event-bus.js
-// Gemini 3.6 Flash | Class Declaration Guard | 2026-07-28
+// Claude Sonnet | Priority 2 & 3 Remediation | 2026-07-28
 
-if (typeof window.EventBus === 'undefined') {
-  window.EventBus = class EventBus {
+if (typeof window.FiboEventBus === 'undefined') {
+  window.FiboEventBus = class FiboEventBus {
     constructor() {
       this.listeners = new Map();
     }
@@ -21,12 +21,15 @@ if (typeof window.EventBus === 'undefined') {
         secureEvent = Object.freeze({ ...event });
       }
       (this.listeners.get(secureEvent.type) || []).forEach(handler => {
-        try { 
-          handler(secureEvent); 
-        } catch (e) { 
-          console.error(`FiboBus Error [${secureEvent.type}]:`, e); 
+        try {
+          handler(secureEvent);
+        } catch (e) {
+          console.error(`FiboBus Error [${secureEvent.type}]:`, e);
         }
       });
     }
   };
 }
+
+// Legacy alias — preserved for backwards compatibility.
+window.EventBus = window.FiboEventBus;

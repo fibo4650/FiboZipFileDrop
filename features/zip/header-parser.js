@@ -1,8 +1,18 @@
 // features/zip/header-parser.js
-// Claude Sonnet 5 | session 3 refactor | 2026-07-28
+// Claude Sonnet | Priority 2 & 3 Remediation | 2026-07-28
 
 if (typeof window.FiboHeaderParser === 'undefined') {
   window.FiboHeaderParser = class FiboHeaderParser {
+    // Shared comment-regex extraction used by isPathHeaderLine and, externally,
+    // by FiboPathResolver.parseTargetInfo (avoids duplicating this regex there).
+    extractCommentInner(line) {
+      if (typeof line !== 'string') return null;
+      const trimmed = line.replace(/^\uFEFF/, '').trim();
+      const match = trimmed.match(/^(?:\/\/|\/\*|#|<!--)\s*(.*?)(?:\*\/|-->)?$/);
+      if (!match) return null;
+      return match[1].trim().replace(/(?:\*\/|-->)$/, '').trim();
+    }
+
     isPathHeaderLine(line) {
       if (typeof line !== 'string') return false;
       const trimmed = line.replace(/^\uFEFF/, '').trim();

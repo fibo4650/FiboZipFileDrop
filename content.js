@@ -1,5 +1,5 @@
 // content.js
-// Claude Sonnet 5 | session 2 refactor | 2026-07-28
+// Claude Sonnet | Priority 2 & 3 Remediation | 2026-07-28
 
 window.fiboPanelInstance = window.fiboPanelInstance || null;
 window.isPushedOpen = window.isPushedOpen || false;
@@ -112,6 +112,11 @@ function bootstrapFibo() {
     return true;
   };
 
+  const fileView = new window.FiboFileView({
+    hiddenFileInput, dynamicContentZone,
+    processInputFiles: (files) => processInputFiles(files)
+  });
+
   const textView = new window.FiboTextView({
     processor, picker, dynamicContentZone,
     checkWorkspacePermission
@@ -122,9 +127,14 @@ function bootstrapFibo() {
   });
 
   const stagingView = new window.FiboStagingView({
-    processor, picker, dynamicContentZone, escapeHtml, showToast,
-    autoLogToggle, emitEventsToggle,
-    onCancel: () => resetToDefaultView()
+    processor, dynamicContentZone, escapeHtml, showToast,
+    onCancel: () => resetToDefaultView(),
+    onUpdateStagedFile: (index, newPath, headers) => processor.updateStagedFile(index, newPath, headers, picker.directoryHandle),
+    onCommitUpload: (approvedIndices, changeTypesMap) => {
+      const enableLogging = autoLogToggle.checked;
+      const enableEvents = emitEventsToggle.checked;
+      return processor.commitUpload(approvedIndices, picker.directoryHandle, enableLogging, enableEvents, changeTypesMap);
+    }
   });
 
   const renderFileModeView = () => {
@@ -136,24 +146,7 @@ function bootstrapFibo() {
     autoLogRow.style.display = 'flex';
     emitEventsRow.style.display = 'flex';
 
-    dynamicContentZone.innerHTML = `
-      <div class="fibo-dropzone" id="dropZone">
-        <span>Slide File or ZIP Here</span>
-        <span class="fibo-hint">(or click to browse local files)</span>
-      </div>
-    `;
-
-    const dropZone = dynamicContentZone.querySelector('#dropZone');
-    dropZone.onclick = () => hiddenFileInput.click();
-    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('active'); });
-    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('active'));
-    dropZone.addEventListener('drop', async (e) => {
-      e.preventDefault();
-      dropZone.classList.remove('active');
-      if (e.dataTransfer.files.length > 0) {
-        await processInputFiles(Array.from(e.dataTransfer.files));
-      }
-    });
+    fileView.render();
   };
 
   const renderTextModeView = () => {
@@ -241,7 +234,9 @@ function bootstrapFibo() {
     statusText.innerText = `Folder: ${e.payload}`;
   });
 
-  bus.subscribe('PROCESS_START', () => { statusText.innerText = `⚡ Analyzing input structure...`; });
+  bus.subscribe('PROCESS_START', (e) => {
+    statusText.innerText = `⚡ Analyzing ${e.payload || 'structure'}...`;
+  });
 
   bus.subscribe('PROCESS_COMPLETE', (e) => {
     const { successCount, failCount, logs, loggingEnabled, eventsEnabled } = e.payload;
@@ -255,38 +250,7 @@ function bootstrapFibo() {
 
     statusText.innerHTML = `<span style='color: ${statusColor};'>Saved: ${successCount} | Failed: ${failCount}${logNoteStr}</span>`;
 
-    let logHtml = `<div class="fibo-log-box">`;
-    logs.forEach(log => {
-      const isOk = log.status === 'SUCCESS';
-      const safePath = escapeHtml(log.path);
-      const safeErr = log.error ? ` (${escapeHtml(log.error)})` : '';
-      const safeType = escapeHtml(log.changeType || 'updated');
-      logHtml += `
-        <div class="${isOk ? 'fibo-log-success' : 'fibo-log-fail'}">
-          ${isOk ? '✓' : '✗'} [${safeType}] ${safePath}${safeErr}
-        </div>
-      `;
-    });
-    logHtml += `</div>`;
-    logHtml += `<button class="fibo-btn" id="downloadLogBtn" style="background: #89b4fa;">📥 Download Execution Log</button>`;
-
-    const logContainer = document.createElement('div');
-    logContainer.style.cssText = "display: flex; flex-direction: column; gap: 8px;";
-    logContainer.innerHTML = logHtml;
-    dynamicContentZone.appendChild(logContainer);
-
-    logContainer.querySelector('#downloadLogBtn').onclick = () => {
-      const logText = logs.map(l => `[${l.status}] [${l.changeType || 'updated'}] ${l.path}${l.error ? ` - Error: ${l.error}` : ''}`).join('\n');
-      const blob = new Blob([logText], { type: 'text/plain' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `fibo-upload-log-${Date.now()}.txt`;
-      logContainer.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    };
+    stagingView.renderExecutionLog(logs);
   });
 
   bus.subscribe('PROCESS_ERROR', (e) => {

@@ -37,6 +37,6 @@ Code file header convention:
 Every delivered code file must have a two-line header as its very first comment:
 
 Line 1: Relative file path (e.g., // app/parent/login/page.js)
-Line 2: Model, chat name, and date (e.g., // Claude Sonnet 4.5 | Phase 4 Bloc 5 — Blason | 2026-07-21)
+Line 2: AI Model name, chat name, and date (e.g., // Claude Sonnet 4.5 | Phase 4 Bloc 5 — Blason | 2026-07-21)
 
 Apply on substantive changes only; skip trivial edits (comments-only, formatting). Greg names his own chat sessions — he will state the chat name explicitly at the start of each session so it can be used in the header stamp.
