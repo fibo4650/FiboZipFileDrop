@@ -1,10 +1,10 @@
 // ui/staging-view.js
-// Claude Sonnet 5 | 01-08-new features | 2026-08-02
-// feature: phase1-multiblock
+// Claude Sonnet 5 | AI Extraction Phase 1-5 | 2026-08-04
+// feature: phase5-ai-extraction
 
 if (typeof window.FiboStagingView === 'undefined') {
   window.FiboStagingView = class FiboStagingView {
-    constructor({ processor, dynamicContentZone, escapeHtml, showToast, onCancel, onUpdateStagedFile, onCommitUpload }) {
+    constructor({ processor, dynamicContentZone, escapeHtml, showToast, onCancel, onUpdateStagedFile, onCommitUpload, onRejectRuleMatch, aiSettingsStore }) {
       this.processor = processor;
       this.zone = dynamicContentZone;
       this.escapeHtml = escapeHtml;
@@ -12,10 +12,23 @@ if (typeof window.FiboStagingView === 'undefined') {
       this.onCancel = onCancel;
       this.onUpdateStagedFile = onUpdateStagedFile;
       this.onCommitUpload = onCommitUpload;
+      this.onRejectRuleMatch = onRejectRuleMatch;
+      this.aiSettingsStore = aiSettingsStore;
       this.activeInlineEditIndex = null;
+      this.attribution = null;
+      this._nextAttribution = null;
+    }
+
+    // Set by content.js's RULE_MATCHED subscriber, which always fires (publish
+    // order in zip-processor.js is synchronous) before ZIP_STAGED triggers show().
+    setPendingAttribution(payload) {
+      this._nextAttribution = payload;
     }
 
     show(files) {
+      this.attribution = this._nextAttribution;
+      this._nextAttribution = null;
+
       // Auto-open the first block still missing a path so the user notices it
       // immediately instead of having to spot a badge buried in a long list.
       const firstNeedsPath = files.find(f => f.needsPath);
@@ -95,7 +108,18 @@ if (typeof window.FiboStagingView === 'undefined') {
       const previousState = preservedState || this.captureUIState();
       const hasExistingFiles = files.some(f => f.exists);
 
+      const hasAiFallback = !!(this.aiSettingsStore && this.aiSettingsStore.hasApiKey());
+      const attributionHtml = this.attribution ? `
+        <div class="fibo-option-row" style="border-color: #cba6f7;">
+          <span>Split via rule: "${this.escapeHtml(this.attribution.ruleName)}" (${this.attribution.matchCount} uses)</span>
+          <button class="fibo-btn fibo-btn-sm fibo-btn-secondary" data-action="dismiss-rule-attribution">
+            Not this — ${hasAiFallback ? 'try Gemini instead' : 'enter path manually'}
+          </button>
+        </div>
+      ` : '';
+
       let listHtml = `
+        ${attributionHtml}
         ${hasExistingFiles ? `
           <div class="fibo-option-row" style="margin-bottom: 4px;">
             <label class="fibo-checkbox-label">
@@ -169,6 +193,15 @@ if (typeof window.FiboStagingView === 'undefined') {
       `;
 
       this.zone.innerHTML = listHtml;
+
+      const dismissAttributionBtn = this.zone.querySelector('[data-action="dismiss-rule-attribution"]');
+      if (dismissAttributionBtn) {
+        dismissAttributionBtn.onclick = () => {
+          const ruleId = this.attribution.ruleId;
+          this.attribution = null;
+          this.onRejectRuleMatch(ruleId);
+        };
+      }
 
       const masterToggle = this.zone.querySelector('#masterToggle');
 

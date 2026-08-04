@@ -5,6 +5,7 @@
   "version": "1.2.1",
   "description": "Click the F icon to slide open a folder sorting panel.",
   "permissions": ["activeTab", "storage", "scripting"],
+  "host_permissions": ["https://generativelanguage.googleapis.com/*"],
   "background": {
     "service_worker": "background.js"
   },
@@ -22,9 +23,12 @@
         "features/zip/collision-detector.js",
         "features/zip/file-writer.js",
         "features/zip/log-writer.js",
+        "features/zip/rule-matcher.js",
         "features/zip/raw-text-stager.js",
         "features/zip-processor.js",
         "features/prompt-manager.js",
+        "features/ai-settings-store.js",
+        "features/learned-rules-store.js",
         "ui/styles.js",
         "ui/shadow-dom.js",
         "ui/toast-manager.js",
@@ -32,6 +36,7 @@
         "ui/file-view.js",
         "ui/text-view.js",
         "ui/prompts-view.js",
+        "ui/settings-view.js",
         "ui/staging-view.js",
         "content.js"
       ]

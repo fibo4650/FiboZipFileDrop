@@ -1,19 +1,22 @@
 // features/zip-processor.js
-// Claude Sonnet 5 | 01-08-new features | 2026-08-02
-// feature: phase1-multiblock
+// Claude Sonnet 5 | AI Extraction Phase 1-5 | 2026-08-04
+// feature: phase5-ai-extraction
 
 if (typeof window.FiboZipProcessor === 'undefined') {
   window.FiboZipProcessor = class FiboZipProcessor {
-    constructor(eventBus) {
+    constructor(eventBus, learnedRulesStore) {
       this.bus = eventBus;
       this.stagedFiles = [];
+      this.learnedRulesStore = learnedRulesStore || null;
+      this.pendingInduction = null; // {originalRawText, files} set by acceptAiExtraction, consumed by commitUpload
 
       this.headerParser = new window.FiboHeaderParser();
       this.pathResolver = new window.FiboPathResolver(this.headerParser);
       this.collisionDetector = new window.FiboCollisionDetector();
       this.fileWriter = new window.FiboFileWriter();
       this.logWriter = new window.FiboLogWriter();
-      this.rawTextStager = new window.FiboRawTextStager(this.headerParser, this.pathResolver, this.collisionDetector);
+      this.ruleMatcher = new window.FiboRuleMatcher();
+      this.rawTextStager = new window.FiboRawTextStager(this.headerParser, this.pathResolver, this.collisionDetector, this.ruleMatcher, this.learnedRulesStore);
     }
 
     // extractHeaderAndBody is the one delegate the UI layer calls directly
@@ -74,6 +77,7 @@ if (typeof window.FiboZipProcessor === 'undefined') {
       try {
         this.bus.publish({ type: 'PROCESS_START', payload: zipBlob.name });
         this.stagedFiles = [];
+        this.pendingInduction = null; // starting an unrelated batch abandons any prior AI induction context
 
         const zip = await JSZip.loadAsync(zipBlob);
 
@@ -137,6 +141,7 @@ if (typeof window.FiboZipProcessor === 'undefined') {
       try {
         this.bus.publish({ type: 'PROCESS_START', payload: `${filesArray.length} file(s)` });
         this.stagedFiles = [];
+        this.pendingInduction = null;
 
         for (const file of filesArray) {
           const isBin = this.pathResolver.isBinary(file.name);
@@ -192,13 +197,132 @@ if (typeof window.FiboZipProcessor === 'undefined') {
 
       try {
         this.bus.publish({ type: 'PROCESS_START', payload: 'Raw Text Input' });
+        this.pendingInduction = null; // starting an unrelated batch abandons any prior AI induction context
         this.stagedFiles = await this.rawTextStager.stageRawText(rawText, fallbackPath, rootHandle);
+
+        const matchedRule = this.rawTextStager.lastMatchedRule;
+        if (matchedRule) {
+          this.bus.publish({
+            type: 'RULE_MATCHED',
+            payload: { ruleId: matchedRule.id, ruleName: matchedRule.name, matchCount: this.stagedFiles.length }
+          });
+          if (this.learnedRulesStore) {
+            this.learnedRulesStore.recordRuleUsage(matchedRule.id).catch(err => console.error('Fibo Rule Usage Record Error:', err));
+          }
+        }
+
         this.bus.publish({ type: 'ZIP_STAGED', payload: this.stagedFiles });
       } catch (err) {
         this.clearState();
         console.error("Fibo Raw Text Error:", err);
+        // Mutually exclusive, not both: PROCESS_ERROR's content.js handler does a
+        // full resetToDefaultView() that would immediately wipe the AI-button
+        // state RAW_TEXT_NO_LOCAL_MATCH's handler just set, if both fired.
+        if (err instanceof window.FiboNoLocalMatchError) {
+          this.bus.publish({ type: 'RAW_TEXT_NO_LOCAL_MATCH', payload: { rawText, fallbackPath, message: err.message } });
+        } else {
+          this.bus.publish({ type: 'PROCESS_ERROR', payload: err.message });
+        }
+      }
+    }
+
+    async requestAiExtraction(rawText, context) {
+      this.bus.publish({ type: 'AI_EXTRACT_START' });
+      try {
+        const response = await chrome.runtime.sendMessage({ type: 'FIBO_AI_EXTRACT', payload: { text: rawText, context: context || '' } });
+        if (!response || !response.ok) {
+          this.bus.publish({ type: 'AI_EXTRACT_ERROR', payload: (response && response.error) || 'Unknown error contacting Gemini.' });
+          return;
+        }
+        this.bus.publish({ type: 'AI_EXTRACT_RESULT', payload: { files: response.files } });
+      } catch (err) {
+        console.error('Fibo AI Extract Error:', err);
+        this.bus.publish({ type: 'AI_EXTRACT_ERROR', payload: err.message || String(err) });
+      }
+    }
+
+    // Every f.path is re-sanitized via resolveFallbackPath — never used directly,
+    // same non-negotiable rule as Tier 3. Unlike Tier 3's per-block handling, a
+    // '..' anywhere in the AI result rejects the WHOLE batch (nothing partially
+    // staged) since this is a single paid network response, not a locally-derived
+    // split — a malformed one is more likely to be entirely wrong than partially.
+    async acceptAiExtraction(files, rootHandle, originalRawText) {
+      if (!rootHandle) {
+        this.bus.publish({ type: 'PROCESS_ERROR', payload: 'Please attach a target folder first!' });
+        return;
+      }
+
+      try {
+        this.bus.publish({ type: 'PROCESS_START', payload: 'Gemini Extraction' });
+
+        const resolved = files.map((f, i) => {
+          const r = this.pathResolver.resolveFallbackPath(f.path, `Gemini result ${i + 1}`);
+          if (!r) throw new Error(`Gemini result ${i + 1} did not resolve to a valid path.`);
+          return { ...r, content: f.content };
+        });
+        this.rawTextStager.flagDuplicatePaths(resolved);
+
+        const staged = [];
+        for (let i = 0; i < resolved.length; i++) {
+          const r = resolved[i];
+          const fileExists = r.needsPath
+            ? false
+            : await this.collisionDetector.checkFileExists(rootHandle, r.parts, r.fileName);
+          const displayPath = r.needsPath ? `(enter path) — file ${i + 1}` : r.displayPath;
+          const index = staged.length;
+
+          staged.push({
+            index,
+            id: `${index}_${displayPath}`,
+            fileName: r.fileName,
+            displayPath,
+            parts: r.parts || [],
+            content: r.content,
+            isBinary: false,
+            exists: fileExists,
+            needsPath: r.needsPath
+          });
+        }
+
+        this.stagedFiles = staged;
+        // Consumed by commitUpload on a successful write — NOT fired here, since
+        // the user can still rename paths, deselect files, or cancel entirely in
+        // staging-view before anything is actually written.
+        this.pendingInduction = files.length >= 2 ? { originalRawText, files } : null;
+        this.bus.publish({ type: 'ZIP_STAGED', payload: this.stagedFiles });
+      } catch (err) {
+        this.clearState();
+        console.error('Fibo AI Accept Error:', err);
         this.bus.publish({ type: 'PROCESS_ERROR', payload: err.message });
       }
+    }
+
+    // A signature is recorded as an observation, not a rule, the first time it's
+    // ever seen — only the SECOND sighting promotes it into a real candidate. A
+    // third+ sighting just strengthens the now-existing rule. One-off paste
+    // formats that never recur stay invisible bookkeeping forever instead of
+    // permanently cluttering the Rules Manager.
+    async tryInduceRule(originalRawText, files) {
+      if (!this.learnedRulesStore) return;
+      const response = await chrome.runtime.sendMessage({ type: 'FIBO_AI_INDUCE', payload: { sampleText: originalRawText } });
+      if (!response || !response.ok || response.templateType === 'unmatched') return;
+
+      const template = { type: response.templateType, ...response.params };
+
+      const existingRule = this.learnedRulesStore.findRuleBySignature(template);
+      if (existingRule) {
+        await this.learnedRulesStore.recordRuleUsage(existingRule.id); // already a real rule — strengthen, don't duplicate
+        return;
+      }
+
+      const observation = await this.learnedRulesStore.recordObservation(template, originalRawText.slice(0, 2000));
+      if (observation.occurrences >= 2) {
+        await this.learnedRulesStore.promoteObservationToRule(observation, {
+          name: response.suggestedName || 'Gemini-Induced Rule',
+          source: 'gemini-induced'
+        });
+      }
+      // occurrences === 1: recorded and nothing more — not yet a rule, not yet visible anywhere.
     }
 
     async commitUpload(approvedIndices, rootHandle, enableLogging = true, enableEvents = true, changeTypesMap = {}) {
@@ -311,6 +435,13 @@ if (typeof window.FiboZipProcessor === 'undefined') {
           }
         }
 
+        // Fire-and-forget, never blocks PROCESS_COMPLETE — only learns from files
+        // the user actually committed to disk, not merely previewed-and-accepted.
+        if (successCount > 0 && this.pendingInduction) {
+          const { originalRawText, files } = this.pendingInduction;
+          this.tryInduceRule(originalRawText, files).catch(err => console.error('Fibo Rule Induction Error:', err));
+        }
+
         this.clearState();
         this.bus.publish({
           type: 'PROCESS_COMPLETE',
@@ -325,6 +456,7 @@ if (typeof window.FiboZipProcessor === 'undefined') {
 
     clearState() {
       this.stagedFiles = [];
+      this.pendingInduction = null;
     }
   };
 }

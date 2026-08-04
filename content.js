@@ -21,7 +21,9 @@ function bootstrapFibo() {
 
   const bus = new window.EventBus();
   const picker = new window.FilePicker(bus);
-  const processor = new window.ZipProcessor(bus);
+  const aiSettingsStore = new window.FiboAiSettingsStore(bus);
+  const learnedRulesStore = new window.FiboLearnedRulesStore(bus);
+  const processor = new window.ZipProcessor(bus, learnedRulesStore);
   const promptManager = new window.PromptManager(bus);
   const workspaceStore = new window.FiboWorkspaceStore();
 
@@ -41,6 +43,7 @@ function bootstrapFibo() {
         <option value="">— Recent Workspaces —</option>
       </select>
       <button class="fibo-btn fibo-btn-sm fibo-btn-icon" id="saveWorkspaceBtn" title="Save current folder as a named workspace">💾</button>
+      <button class="fibo-btn fibo-btn-sm fibo-btn-icon" id="settingsBtn" title="AI Settings & Learned Rules">⚙️</button>
     </div>
     <div class="fibo-status" id="statusText">System Unbound</div>
 
@@ -75,10 +78,13 @@ function bootstrapFibo() {
   }
 
   promptManager.init().catch(err => console.error("PromptManager Init Error:", err));
+  aiSettingsStore.init().catch(err => console.error("AiSettingsStore Init Error:", err));
+  learnedRulesStore.init().catch(err => console.error("LearnedRulesStore Init Error:", err));
 
   const connectBtn = window.fiboPanelInstance.querySelector('#connectBtn');
   const workspaceSelect = window.fiboPanelInstance.querySelector('#workspaceSelect');
   const saveWorkspaceBtn = window.fiboPanelInstance.querySelector('#saveWorkspaceBtn');
+  const settingsBtn = window.fiboPanelInstance.querySelector('#settingsBtn');
   const statusText = window.fiboPanelInstance.querySelector('#statusText');
   const closeBtn = window.fiboPanelInstance.querySelector('#closeBtn');
   const hiddenFileInput = window.fiboPanelInstance.querySelector('#hiddenFileInput');
@@ -129,21 +135,38 @@ function bootstrapFibo() {
 
   const textView = new window.FiboTextView({
     processor, picker, dynamicContentZone,
-    checkWorkspacePermission
+    checkWorkspacePermission, escapeHtml, aiSettingsStore,
+    onRequestAiExtraction: (rawText, context) => processor.requestAiExtraction(rawText, context),
+    onAcceptAiExtraction: (files) => processor.acceptAiExtraction(files, picker.directoryHandle, textView.lastRawText)
   });
 
   const promptsView = new window.FiboPromptsView({
     promptManager, dynamicContentZone, escapeHtml, copyToClipboard, showToast
   });
 
+  const settingsView = new window.FiboSettingsView({
+    aiSettingsStore, learnedRulesStore, dynamicContentZone, escapeHtml, showToast,
+    onBack: () => resetToDefaultView()
+  });
+
   const stagingView = new window.FiboStagingView({
-    processor, dynamicContentZone, escapeHtml, showToast,
+    processor, dynamicContentZone, escapeHtml, showToast, aiSettingsStore,
     onCancel: () => resetToDefaultView(),
     onUpdateStagedFile: (index, newPath, headers) => processor.updateStagedFile(index, newPath, headers, picker.directoryHandle),
     onCommitUpload: (approvedIndices, changeTypesMap) => {
       const enableLogging = autoLogToggle.checked;
       const enableEvents = emitEventsToggle.checked;
       return processor.commitUpload(approvedIndices, picker.directoryHandle, enableLogging, enableEvents, changeTypesMap);
+    },
+    onRejectRuleMatch: (ruleId) => {
+      learnedRulesStore.recordRejection(ruleId).catch(err => console.error('Fibo Rule Rejection Record Error:', err));
+      // Capture before renderTextModeView() runs — it calls textView.resetAiState(),
+      // which would otherwise wipe these before showAiSection can re-seed them.
+      const preservedRawText = textView.lastRawText;
+      const preservedFallbackPath = textView.lastFallbackPath;
+      processor.clearState();
+      renderTextModeView();
+      textView.showAiSection({ rawText: preservedRawText, fallbackPath: preservedFallbackPath });
     }
   });
 
@@ -168,6 +191,7 @@ function bootstrapFibo() {
     autoLogRow.style.display = 'flex';
     emitEventsRow.style.display = 'flex';
 
+    textView.resetAiState();
     textView.render();
   };
 
@@ -264,12 +288,50 @@ function bootstrapFibo() {
   modeTextBtn.onclick = () => { renderTextModeView(); };
   modePromptsBtn.onclick = () => { renderPromptsModeView(); };
 
+  settingsBtn.onclick = () => {
+    autoLogRow.style.display = 'none';
+    emitEventsRow.style.display = 'none';
+    settingsView.render();
+  };
+
   hiddenFileInput.onchange = async (e) => {
     if (e.target.files.length > 0) {
       await processInputFiles(Array.from(e.target.files));
       hiddenFileInput.value = "";
     }
   };
+
+  bus.subscribe('RAW_TEXT_NO_LOCAL_MATCH', (e) => {
+    // Sets the same status-text styling PROCESS_ERROR would have — but does NOT
+    // call resetToDefaultView(), which would wipe the AI-button state showAiSection
+    // is about to set (see the mutually-exclusive publish in zip-processor.js).
+    const safeError = escapeHtml(e.payload.message);
+    statusText.innerHTML = `<span style='color: #f38ba8;'>🚨 Error: ${safeError}</span>`;
+    if (currentMode === 'TEXT') textView.showAiSection(e.payload);
+  });
+
+  bus.subscribe('AI_EXTRACT_START', () => {
+    if (currentMode === 'TEXT') statusText.innerText = '✨ Asking Gemini...';
+  });
+
+  bus.subscribe('AI_EXTRACT_RESULT', (e) => {
+    if (currentMode === 'TEXT') textView.renderAiPreview(e.payload.files);
+  });
+
+  bus.subscribe('AI_EXTRACT_ERROR', (e) => {
+    if (currentMode === 'TEXT') {
+      textView.showAiError(e.payload);
+      showToast(`🚨 Gemini: ${e.payload}`);
+    }
+  });
+
+  bus.subscribe('RULE_MATCHED', (e) => {
+    stagingView.setPendingAttribution(e.payload);
+  });
+
+  bus.subscribe('LEARNED_RULES_UPDATED', () => {
+    if (settingsView.currentView === 'main') settingsView.render();
+  });
 
   bus.subscribe('PROMPTS_UPDATED', () => {
     if (currentMode === 'PROMPTS' && !promptsView.isEditing()) {
